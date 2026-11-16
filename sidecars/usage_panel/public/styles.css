@@ -43,24 +43,24 @@
   --readable-muted: #3f4450;
   --number: #0c0e12;
 
-  --accent: #388578;
-  --accent-rgb: 56, 133, 120;
-  --ok: #3c8c58;
-  --blue: #4175ab;
-  --blue-rgb: 65, 117, 171;
-  --orange: #c46f4d;
-  --purple: #7261ab;
-  --yellow: #b38b34;
-  --red: #bf4b54;
-  --bar-teal: #388578;
-  --bar-coral: #c46f4d;
+  --accent: #0891b2;
+  --accent-rgb: 8, 145, 178;
+  --ok: #16a34a;
+  --blue: #2563eb;
+  --blue-rgb: 37, 99, 235;
+  --orange: #ea580c;
+  --purple: #9333ea;
+  --yellow: #eab308;
+  --red: #e11d48;
+  --bar-teal: #0891b2;
+  --bar-coral: #ea580c;
 
-  --chart-heat-0: #f1f5f9;
-  --chart-heat-1: #dbe7f5;
-  --chart-heat-2: #aec9e8;
-  --chart-heat-3: #74a1d1;
-  --chart-heat-4: #487bb3;
-  --chart-heat-5: #2c598a;
+  --chart-heat-0: #f1f2f5;
+  --chart-heat-1: #dcdfe6;
+  --chart-heat-2: #b4b9c5;
+  --chart-heat-3: #808694;
+  --chart-heat-4: #474c58;
+  --chart-heat-5: #111318;
   --heat-glow: none;
 
   --shadow: rgba(0, 0, 0, 0.08);
@@ -72,93 +72,93 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --panel-bg: #070708;
-    --overlay-rgb: 237, 240, 245;
-    --line-rgb: 29, 29, 34;
+    --overlay-rgb: 245, 247, 250;
+    --line-rgb: 35, 38, 46;
     --panel-rgb: 7, 7, 8;
-    --sunken-rgb: 23, 23, 28;
+    --sunken-rgb: 30, 33, 40;
 
-    --surface-popover: #0e0e11;
-    --surface-card: #0d0d10;
-    --surface-control: #131317;
-    --surface-pill-active: #222228;
-    --sunken-bg: #17171c;
+    --surface-popover: #111216;
+    --surface-card: #101115;
+    --surface-control: #16181e;
+    --surface-pill-active: #282c35;
+    --sunken-bg: #1e2128;
 
-    --line: #1d1d22;
-    --line-strong: #2b2b33;
+    --line: #23262e;
+    --line-strong: #323640;
 
-    --text: #edf0f5;
-    --muted: #9ca3af;
-    --readable-muted: #c6cbd6;
-    --number: #f5f7fa;
+    --text: #f5f7fa;
+    --muted: #aeb6c4;
+    --readable-muted: #d1d5db;
+    --number: #ffffff;
 
-    --accent: #6fb89c;
-    --accent-rgb: 111, 184, 156;
-    --ok: #76b583;
-    --blue: #73a0d4;
-    --blue-rgb: 115, 160, 212;
-    --orange: #d48d6a;
-    --purple: #9d8dd4;
-    --yellow: #d4b86a;
-    --red: #d9686e;
-    --bar-teal: #6fb89c;
-    --bar-coral: #d48d6a;
+    --accent: #1ef2c8;
+    --accent-rgb: 30, 242, 200;
+    --ok: #4ade80;
+    --blue: #38bdf8;
+    --blue-rgb: 56, 189, 248;
+    --orange: #ff6e42;
+    --purple: #c084fc;
+    --yellow: #fde047;
+    --red: #fb5b78;
+    --bar-teal: #1ef2c8;
+    --bar-coral: #ff6e42;
 
-    --chart-heat-0: #151820;
-    --chart-heat-1: #1e3148;
-    --chart-heat-2: #2d4e73;
-    --chart-heat-3: #4776a8;
-    --chart-heat-4: #6fa0d4;
-    --chart-heat-5: #a8ccf0;
+    --chart-heat-0: #16171c;
+    --chart-heat-1: #2a2c34;
+    --chart-heat-2: #4b4f5c;
+    --chart-heat-3: #7d8394;
+    --chart-heat-4: #bcc2cf;
+    --chart-heat-5: #ffffff;
     --heat-glow: none;
 
     --shadow: rgba(0, 0, 0, 0.65);
-    --shadow-popover: 0 16px 38px -6px rgba(0, 0, 0, 0.85), 0 0 0 1px #2b2b33;
+    --shadow-popover: 0 16px 38px -6px rgba(0, 0, 0, 0.85), 0 0 0 1px #323640;
   }
 }
 
 :root[data-theme="dark"] {
   --panel-bg: #070708;
-  --overlay-rgb: 237, 240, 245;
-  --line-rgb: 29, 29, 34;
+  --overlay-rgb: 245, 247, 250;
+  --line-rgb: 35, 38, 46;
   --panel-rgb: 7, 7, 8;
-  --sunken-rgb: 23, 23, 28;
+  --sunken-rgb: 30, 33, 40;
 
-  --surface-popover: #0e0e11;
-  --surface-card: #0d0d10;
-  --surface-control: #131317;
-  --surface-pill-active: #222228;
-  --sunken-bg: #17171c;
+  --surface-popover: #111216;
+  --surface-card: #101115;
+  --surface-control: #16181e;
+  --surface-pill-active: #282c35;
+  --sunken-bg: #1e2128;
 
-  --line: #1d1d22;
-  --line-strong: #2b2b33;
+  --line: #23262e;
+  --line-strong: #323640;
 
-  --text: #edf0f5;
-  --muted: #9ca3af;
-  --readable-muted: #c6cbd6;
-  --number: #f5f7fa;
+  --text: #f5f7fa;
+  --muted: #aeb6c4;
+  --readable-muted: #d1d5db;
+  --number: #ffffff;
 
-  --accent: #6fb89c;
-  --accent-rgb: 111, 184, 156;
-  --ok: #76b583;
-  --blue: #73a0d4;
-  --blue-rgb: 115, 160, 212;
-  --orange: #d48d6a;
-  --purple: #9d8dd4;
-  --yellow: #d4b86a;
-  --red: #d9686e;
-  --bar-teal: #6fb89c;
-  --bar-coral: #d48d6a;
+  --accent: #1ef2c8;
+  --accent-rgb: 30, 242, 200;
+  --ok: #4ade80;
+  --blue: #38bdf8;
+  --blue-rgb: 56, 189, 248;
+  --orange: #ff6e42;
+  --purple: #c084fc;
+  --yellow: #fde047;
+  --red: #fb5b78;
+  --bar-teal: #1ef2c8;
+  --bar-coral: #ff6e42;
 
-  --chart-heat-0: #151820;
-  --chart-heat-1: #1e3148;
-  --chart-heat-2: #2d4e73;
-  --chart-heat-3: #4776a8;
-  --chart-heat-4: #6fa0d4;
-  --chart-heat-5: #a8ccf0;
+  --chart-heat-0: #16171c;
+  --chart-heat-1: #2a2c34;
+  --chart-heat-2: #4b4f5c;
+  --chart-heat-3: #7d8394;
+  --chart-heat-4: #bcc2cf;
+  --chart-heat-5: #ffffff;
   --heat-glow: none;
 
   --shadow: rgba(0, 0, 0, 0.65);
-  --shadow-popover: 0 16px 38px -6px rgba(0, 0, 0, 0.85), 0 0 0 1px #2b2b33;
+  --shadow-popover: 0 16px 38px -6px rgba(0, 0, 0, 0.85), 0 0 0 1px #323640;
 }
 
 *,
@@ -744,7 +744,7 @@ summary:focus-visible {
 .limit-meter {
   position: relative;
   width: 100%;
-  height: 0.38rem;
+  height: 0.46rem;
   border-radius: var(--pill-radius);
   background: var(--sunken-bg);
   overflow: hidden;
@@ -776,7 +776,7 @@ summary:focus-visible {
 .comp-stacked-bar {
   display: flex;
   width: 100%;
-  height: 0.46rem;
+  height: 0.54rem;
   border-radius: var(--pill-radius);
   background: var(--sunken-bg);
   overflow: hidden;
@@ -1048,7 +1048,7 @@ summary:focus-visible {
 .heat-cell[data-level="4"] { background: var(--chart-heat-4); }
 .heat-cell[data-level="5"] { background: var(--chart-heat-5); box-shadow: var(--heat-glow); }
 .heat-cell.is-future { opacity: 0.25; cursor: default; }
-.heat-cell.is-today { box-shadow: inset 0 0 0 1px var(--accent); }
+.heat-cell.is-today[data-level="0"] { box-shadow: inset 0 0 0 1px var(--muted); }
 .heat-cell:not(.is-future):hover {
   box-shadow: inset 0 0 0 1.5px var(--text);
   filter: brightness(1.1);
@@ -1236,7 +1236,7 @@ summary:focus-visible {
 .ios-progress {
   display: block;
   width: 100%;
-  height: 0.32rem;
+  height: 0.36rem;
   border: 0;
   border-radius: var(--pill-radius);
   overflow: hidden;
