@@ -1,0 +1,6 @@
+{
+  "name": "usage_panel",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Live context window & token usage dashboard sidecar"
+}

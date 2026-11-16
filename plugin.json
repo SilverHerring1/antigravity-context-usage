@@ -1,0 +1,15 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "context-usage",
+  "displayName": "Context & Usage",
+  "version": "1.0.0",
+  "description": "Monitor live context window usage, compaction checkpoints, and daily API/token trends in the side panel.",
+  "logo": "assets/logo.svg",
+  "author": "Local Custom Extension",
+  "keywords": ["context", "tokens", "usage", "compaction", "telemetry"],
+  "suggestedPrompts": [
+    "Show my current context usage and remaining budget",
+    "Check how many compactions happened in this conversation",
+    "Summarize my recent daily token consumption"
+  ]
+}

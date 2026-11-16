@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    try {
+      var saved = localStorage.getItem('context_usage_theme');
+      if (saved === 'light' || saved === 'dark') {
+        document.documentElement.dataset.theme = saved;
+        document.documentElement.style.colorScheme = saved;
+        document.querySelector('meta[name="color-scheme"]').content = saved;
+      }
+    } catch (e) {}
+  </script>
+  <title>Context &amp; Usage</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="app" class="app-stage">
+    <main class="shell" tabindex="-1">
+      <!-- Minimalist Transparent Top Header: Borderless SilverHerring1 Avatar + DAY/MONTH/TOTAL -->
+      <header class="titlebar">
+        <div class="titlebar-main">
+          <button
+            id="sessionPickerBtn"
+            type="button"
+            class="profile-chip"
+            commandfor="sessionPopover"
+            command="toggle-popover"
+            title="切换查看的对话会话"
+          >
+            <span class="avatar-wrap">
+              <img
+                id="userAvatarImg"
+                src="./avatar.jpg"
+                alt="SilverHerring1"
+                width="26"
+                height="26"
+                class="avatar-img"
+              >
+              <span id="liveDot" class="live-dot" aria-hidden="true"></span>
+            </span>
+            <span class="profile-meta">
+              <span class="profile-top">
+                <strong class="profile-name">SilverHerring1</strong>
+                <span id="liveCountChip" class="live-count-text" aria-hidden="true"></span>
+              </span>
+              <span id="sessionPickerLabel" class="profile-sub">当前活跃会话</span>
+            </span>
+            <span class="chip-chevron" aria-hidden="true">▾</span>
+          </button>
+
+          <div class="title-controls">
+            <div class="period-tabs" role="group" aria-label="统计周期">
+              <button type="button" class="period-tab" data-period="1">DAY</button>
+              <button type="button" class="period-tab is-active" data-period="30">MONTH</button>
+              <button type="button" class="period-tab" data-period="all">TOTAL</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Popover: Session Switcher -->
+      <div id="sessionPopover" popover="auto" class="glass-popover session-popover" aria-label="选择会话">
+        <div class="popover-head">
+          <span class="popover-title">切换对话会话</span>
+          <span id="popoverSessionCount" class="popover-meta">0 个</span>
+        </div>
+        <div id="sessionPopoverList" class="popover-list"></div>
+      </div>
+
+      <div class="shell-scroll">
+        <div id="emptyNotice" class="shell-section empty-box" hidden>
+          <p class="empty-title">暂未发现本地对话转录</p>
+          <p class="empty-desc">仅以只读方式读取 Antigravity 本地 <code>brain/*/transcript.jsonl</code>，任意发起对话后将自动呈现。</p>
+        </div>
+
+        <!-- VIEW 1: HOME (Image 1 + Image 3 Unified Single-Sheet Overview) -->
+        <section id="panel-home" class="view-panel" aria-label="主页总览">
+          <!-- Hero Tokens -->
+          <div class="shell-section hero-section">
+            <div class="label-row">
+              <span class="eyebrow" id="heroEyebrow">CURRENT CONTEXT · 实测压缩线</span>
+              <div class="capsule-group" role="group" aria-label="首页数字口径">
+                <button type="button" class="capsule-btn is-active" data-hero-mode="window">当前窗口</button>
+                <button type="button" class="capsule-btn" data-hero-mode="total">累计总计</button>
+              </div>
+            </div>
+            <div class="total-number-row">
+              <div id="heroMainNumber" class="total-number">—</div>
+              <span id="homePctBadge" class="hero-compact-pill">0%</span>
+            </div>
+            <div id="heroSubRow" class="total-sub-row">读取中…</div>
+          </div>
+
+          <!-- Context Quota Meter Section (Image 3 Glossy Bar Style) -->
+          <div class="shell-section">
+            <div class="section-head">
+              <span class="section-title">上下文额度</span>
+              <div class="capsule-group" role="group" aria-label="参考上限选择">
+                <button type="button" class="capsule-btn is-active" data-ref="observed">实测</button>
+                <button type="button" class="capsule-btn" data-ref="200k">200K</button>
+                <button type="button" class="capsule-btn" data-ref="1m">1M</button>
+              </div>
+            </div>
+
+            <div class="quota-block">
+              <div class="quota-row">
+                <div class="quota-labels">
+                  <span>窗口已用</span>
+                  <span id="homeQuotaRight" class="mono-num">—</span>
+                </div>
+                <div class="limit-meter" aria-hidden="true">
+                  <div id="homeQuotaFill" class="limit-meter-fill"></div>
+                </div>
+                <div class="quota-foot">
+                  <span id="homeQuotaMetaL">距上次压缩 — 轮</span>
+                  <span id="homeQuotaMetaR">剩余 —</span>
+                </div>
+              </div>
+
+              <div class="quota-row">
+                <div class="quota-labels">
+                  <span>缓存命中率</span>
+                  <span id="homeCacheRight" class="mono-num">—</span>
+                </div>
+                <div class="limit-meter" aria-hidden="true">
+                  <div id="homeCacheFill" class="limit-meter-fill is-accent"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Context Composition Summary Section -->
+          <div class="shell-section">
+            <div class="section-head">
+              <span class="section-title">当前组成</span>
+              <button type="button" class="text-link-btn" data-jump-tab="context">展开详情 ›</button>
+            </div>
+            <div id="homeCompBar" class="comp-stacked-bar" aria-label="上下文分类构成条"></div>
+            <div id="homeCompList" class="comp-mini-list"></div>
+          </div>
+
+          <!-- Top Tools (Image 2 style hairline progress list) -->
+          <div class="shell-section">
+            <div class="section-head">
+              <span class="section-title">高频工具</span>
+              <span id="homeToolsMeta" class="section-meta">—</span>
+            </div>
+            <div id="homeToolsList" class="progress-list"></div>
+          </div>
+
+          <!-- Activity Heatmap + Sparkline (Javis603 compact grid + 5 active levels) -->
+          <div class="shell-section">
+            <div class="section-head">
+              <span class="section-title">活动 · 近 24 周</span>
+              <span id="homeActiveDaysText" class="section-meta">活跃 — 天</span>
+            </div>
+            <div id="homeHeatmapBox" class="heatmap-compact"></div>
+            <div class="heatmap-foot">
+              <span id="homeHeatmapInfo" class="mono-muted">点击小方格查看当日用量</span>
+              <span class="heat-legend" aria-hidden="true">
+                <span>少</span>
+                <i class="heat-swatch" data-level="0"></i>
+                <i class="heat-swatch" data-level="1"></i>
+                <i class="heat-swatch" data-level="2"></i>
+                <i class="heat-swatch" data-level="3"></i>
+                <i class="heat-swatch" data-level="4"></i>
+                <i class="heat-swatch" data-level="5"></i>
+                <span>多</span>
+              </span>
+            </div>
+            <div class="spark-head">
+              <span class="section-title">近期趋势</span>
+              <span id="homePeakText" class="mono-muted">峰值 —</span>
+            </div>
+            <div id="homeSparklineBox" class="sparkline-box"></div>
+          </div>
+        </section>
+
+        <!-- VIEW 2: CONTEXT (dsh-context design, ZERO 100-cell grid) -->
+        <section id="panel-context" class="view-panel" aria-label="上下文组成与趋势" hidden>
+          <!-- Context Stats 6-Cell Hairline Strip -->
+          <div class="shell-section">
+            <div class="dash-cards dash-cards-6">
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxTurnsVal">—</span>
+                <span class="dash-card-k">API 轮次</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxStepsVal">—</span>
+                <span class="dash-card-k">总步数</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxCacheVal">—</span>
+                <span class="dash-card-k">缓存命中</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxSinceCpVal">—</span>
+                <span class="dash-card-k">距压缩</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxCpCountVal">—</span>
+                <span class="dash-card-k">已压缩</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="ctxFleetVal">—</span>
+                <span class="dash-card-k">编队节点</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- dsh-context Current Composition Stacked Bar + Rows -->
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">当前上下文组成</h2>
+                <p id="ctxCompSub" class="section-sub">无网格堆叠视图 · 按真实窗口比例拆分</p>
+              </div>
+              <div class="capsule-group" role="group" aria-label="上下文参考上限">
+                <button type="button" class="capsule-btn is-active" data-ref="observed">实测</button>
+                <button type="button" class="capsule-btn" data-ref="200k">200K</button>
+                <button type="button" class="capsule-btn" data-ref="1m">1M</button>
+              </div>
+            </div>
+
+            <div class="ctx-budget-line">
+              <span id="ctxBudgetUsed" class="mono-num">—</span>
+              <span id="ctxBudgetRemain" class="mono-muted">剩余 —</span>
+            </div>
+
+            <div id="ctxStackedBar" class="comp-stacked-bar is-tall" role="img" aria-label="上下文六段构成进度条"></div>
+
+            <div id="ctxCompRows" class="comp-detail-list"></div>
+          </div>
+
+          <!-- dsh-context Context Trend + 3-Line Step Brief -->
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">上下文增长趋势</h2>
+                <p id="turnChartSubtitle" class="section-sub">点击柱子查看对应轮次摘要，✂ 表示自动压缩</p>
+              </div>
+              <div class="capsule-group" role="group" aria-label="增长趋势模式">
+                <button type="button" class="capsule-btn is-active" data-turn-mode="total">总占用</button>
+                <button type="button" class="capsule-btn" data-turn-mode="delta">增量 Δ</button>
+              </div>
+            </div>
+
+            <div id="turnChartBox" class="chart-box"></div>
+
+            <!-- 3-Line Step Brief -->
+            <div id="stepBriefBox" class="step-brief">
+              <div class="brief-head">
+                <span class="brief-badge" id="briefTurnTitle">最新轮次摘要</span>
+                <span class="mono-muted" id="briefTurnMeta">—</span>
+              </div>
+              <div class="brief-rows">
+                <div class="brief-row">
+                  <span class="brief-key">User</span>
+                  <span class="brief-val" id="briefUser">—</span>
+                </div>
+                <div class="brief-row">
+                  <span class="brief-key">In</span>
+                  <span class="brief-val" id="briefIn">—</span>
+                </div>
+                <div class="brief-row">
+                  <span class="brief-key">Resp</span>
+                  <span class="brief-val" id="briefResp">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- dsh-context Events Log -->
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">上下文事件流</h2>
+                <p class="section-sub">自动压缩、≥15K 跃升、用户输入与异常</p>
+              </div>
+              <div class="capsule-group" role="group" aria-label="事件类型筛选">
+                <button type="button" class="capsule-btn is-active" data-ev-filter="all">全部</button>
+                <button type="button" class="capsule-btn" data-ev-filter="compact">压缩</button>
+                <button type="button" class="capsule-btn" data-ev-filter="spike">跃升</button>
+                <button type="button" class="capsule-btn" data-ev-filter="user">输入</button>
+                <button type="button" class="capsule-btn" data-ev-filter="error">异常</button>
+              </div>
+            </div>
+            <div id="contextEventsList" class="hairline-list"></div>
+          </div>
+        </section>
+
+        <!-- VIEW 3: USAGE TRENDS (Image 2 + Image 4 Dashboard) -->
+        <section id="panel-usage" class="view-panel" aria-label="统计与趋势" hidden>
+          <div class="shell-section">
+            <div class="filter-bar">
+              <div class="capsule-group" role="group" aria-label="统计时间范围">
+                <button type="button" class="capsule-btn" data-range="7">7天</button>
+                <button type="button" class="capsule-btn" data-range="14">14天</button>
+                <button type="button" class="capsule-btn is-active" data-range="30">30天</button>
+                <button type="button" class="capsule-btn" data-range="90">90天</button>
+                <button type="button" class="capsule-btn" data-range="all">全部</button>
+              </div>
+              <div class="capsule-group" role="group" aria-label="统计范围口径">
+                <button type="button" class="capsule-btn is-active" data-scope="all">含子智能体</button>
+                <button type="button" class="capsule-btn" data-scope="main">仅主对话</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="shell-section">
+            <div class="dash-cards">
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiTotalTokens">—</span>
+                <span class="dash-card-k">总 TOKEN</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiApiCalls">—</span>
+                <span class="dash-card-k">API 请求</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiActiveDays">—</span>
+                <span class="dash-card-k">活跃天数</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiStreakDays">—</span>
+                <span class="dash-card-k">连续天数</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiPeakDay">—</span>
+                <span class="dash-card-k">峰值单日</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiCacheHit">—</span>
+                <span class="dash-card-k">缓存命中</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiToolCalls">—</span>
+                <span class="dash-card-k">工具调用</span>
+              </div>
+              <div class="dash-card">
+                <span class="dash-card-v" id="kpiCheckpoints">—</span>
+                <span class="dash-card-k">压缩次数</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Token 活动 · 近 24 周</h2>
+                <p id="heatmapSubtitle" class="section-sub">活跃 — 天 · 点击格子查看当天统计</p>
+              </div>
+              <div class="capsule-group" role="group" aria-label="热力图指标">
+                <button type="button" class="capsule-btn is-active" data-heat-metric="tokens">Tokens</button>
+                <button type="button" class="capsule-btn" data-heat-metric="calls">请求数</button>
+              </div>
+            </div>
+
+            <div id="heatmapBox" class="heatmap-scroll"></div>
+
+            <div class="heatmap-foot">
+              <span id="heatmapHoverInfo" class="mono-muted">点击或悬停日期格查看详情</span>
+              <span class="heat-legend" aria-hidden="true">
+                <span>少</span>
+                <i class="heat-swatch" data-level="0"></i>
+                <i class="heat-swatch" data-level="1"></i>
+                <i class="heat-swatch" data-level="2"></i>
+                <i class="heat-swatch" data-level="3"></i>
+                <i class="heat-swatch" data-level="4"></i>
+                <i class="heat-swatch" data-level="5"></i>
+                <span>多</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="shell-section">
+            <div class="chart-pair">
+              <div class="chart-col">
+                <div class="section-head">
+                  <div>
+                    <h2 class="section-title">Tokens 趋势</h2>
+                    <p id="tokensChartSum" class="section-sub">—</p>
+                  </div>
+                  <div class="head-controls">
+                    <div class="capsule-group" role="group" aria-label="Token 拆分方式">
+                      <button type="button" class="capsule-btn is-active" data-tok-split="composition">构成</button>
+                      <button type="button" class="capsule-btn" data-tok-split="role">主/子</button>
+                    </div>
+                    <div class="capsule-group" role="group" aria-label="图表形态">
+                      <button type="button" class="capsule-btn is-active" data-tok-style="bar">柱状</button>
+                      <button type="button" class="capsule-btn" data-tok-style="line">折线</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="tokensChartBox" class="chart-box"></div>
+                <div id="tokensChartLegend" class="dash-legend"></div>
+              </div>
+
+              <div class="chart-col">
+                <div class="section-head">
+                  <div>
+                    <h2 class="section-title">API 请求次数</h2>
+                    <p id="callsChartSum" class="section-sub">—</p>
+                  </div>
+                  <span class="meta-badge">每日趋势</span>
+                </div>
+                <div id="callsChartBox" class="chart-box"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">按工具占比</h2>
+                <p class="section-sub">全工作区工具调用分布</p>
+              </div>
+              <span id="globalToolsTotal" class="meta-badge">0 次</span>
+            </div>
+            <div id="globalToolsList" class="progress-list"></div>
+          </div>
+
+          <div class="shell-section">
+            <details class="table-details">
+              <summary class="details-summary">查看每日用量明细表（可访问数据视图）</summary>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">日期</th>
+                      <th scope="col">总 Tokens</th>
+                      <th scope="col">缓存</th>
+                      <th scope="col">新输入+输出</th>
+                      <th scope="col">API 请求</th>
+                      <th scope="col">压缩</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dailyTableBody"></tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <!-- VIEW 4: TOOLS & AGENT FLEET -->
+        <section id="panel-tools" class="view-panel" aria-label="编队与工具" hidden>
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">智能体编队 (Fleet)</h2>
+                <p id="fleetSummary" class="section-sub">主对话与其派生的子智能体家族</p>
+              </div>
+              <span id="fleetCountBadge" class="meta-badge">1 个节点</span>
+            </div>
+            <div id="fleetList" class="hairline-list"></div>
+          </div>
+
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">本会话工具调用</h2>
+                <p class="section-sub">当前选中对话工具触发占比</p>
+              </div>
+              <span id="sessionToolsTotal" class="meta-badge">0 次</span>
+            </div>
+            <div id="sessionToolsList" class="progress-list"></div>
+          </div>
+
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">文件活动</h2>
+                <p class="section-sub">读写与检索追踪 (<span id="fileCountBadge">0 个</span>)</p>
+              </div>
+              <div class="capsule-group" role="group" aria-label="文件操作筛选">
+                <button type="button" class="capsule-btn is-active" data-file-filter="all">全部</button>
+                <button type="button" class="capsule-btn" data-file-filter="read">读取</button>
+                <button type="button" class="capsule-btn" data-file-filter="write">写入</button>
+                <button type="button" class="capsule-btn" data-file-filter="search">搜索</button>
+              </div>
+            </div>
+            <div id="fileActivityList" class="hairline-list"></div>
+          </div>
+
+          <div class="shell-section">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">命令执行记录</h2>
+                <p class="section-sub">最近 24 条 Shell 执行摘要</p>
+              </div>
+              <span id="cmdCountBadge" class="meta-badge">0 条</span>
+            </div>
+            <div id="commandsList" class="hairline-list"></div>
+          </div>
+        </section>
+
+        <div class="dock-spacer" aria-hidden="true"></div>
+      </div>
+
+      <!-- Transparent Floating Bottom Controls (Javis603 Split Switcher + Theme Toggle + Refresh) -->
+      <footer class="bottom-bar" role="region" aria-label="快捷导航">
+        <div class="view-switcher">
+          <button id="dockHomeBtn" type="button" class="view-switcher-current" title="返回主页或切换页面">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 10v10h14V10" />
+            </svg>
+            <span id="dockNavLabel">主页</span>
+          </button>
+          <button
+            id="dockNavBtn"
+            type="button"
+            class="view-switcher-disclosure"
+            commandfor="dockNavPopover"
+            command="toggle-popover"
+            aria-label="选择视图"
+            title="选择视图"
+          >
+            <span class="chip-chevron" aria-hidden="true">▾</span>
+          </button>
+        </div>
+
+        <button id="jumpActiveBtn" type="button" class="dock-pill dock-pill-accent" hidden>
+          回到当前
+        </button>
+
+        <div class="footer-actions">
+          <button id="themeToggleBtn" type="button" class="dock-icon-btn" title="切换深色 / 浅色模式" aria-label="切换深浅模式">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" />
+              <path d="M12 4a8 8 0 0 0 0 16Z" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          <button id="refreshBtn" type="button" class="dock-icon-btn" title="刷新本地遥测" aria-label="刷新数据">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-3.1-6.8" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+          </button>
+        </div>
+      </footer>
+
+      <!-- Popover: View Switcher (Image 1 vertical frosted menu) -->
+      <div id="dockNavPopover" popover="auto" class="glass-popover dock-popover" aria-label="切换页面视图">
+        <div class="dock-nav-group">
+          <button type="button" class="dock-nav-item is-active" data-jump-tab="home">
+            <span class="nav-dot" aria-hidden="true">⌂</span>
+            <span>主页</span>
+          </button>
+          <button type="button" class="dock-nav-item" data-jump-tab="context">
+            <span class="nav-dot" aria-hidden="true">◔</span>
+            <span>上下文</span>
+          </button>
+          <button type="button" class="dock-nav-item" data-jump-tab="usage">
+            <span class="nav-dot" aria-hidden="true">↗</span>
+            <span>趋势</span>
+          </button>
+          <button type="button" class="dock-nav-item" data-jump-tab="tools">
+            <span class="nav-dot" aria-hidden="true">⌘</span>
+            <span>编队与工具</span>
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
