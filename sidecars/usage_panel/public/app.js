@@ -43,6 +43,7 @@ const state = {
   tokSplit: 'composition',  // 'composition' | 'role'
   tokStyle: 'bar',          // 'bar' | 'line'
   selectedTargetId: '',
+  selectedHeatDate: '',
   displayedHeroValue: null,
   heroRafId: 0,
   animatePending: true,
@@ -80,6 +81,7 @@ async function fetchSnapshot(force = false) {
 
 // ---------- Theme Synchronization ----------
 const THEME_STORAGE_KEY = 'context_usage_theme';
+let themeOverriddenByUser = false;
 
 function getCurrentTheme() {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
@@ -153,18 +155,29 @@ function applyTheme(mode) {
 }
 
 function toggleTheme() {
+  themeOverriddenByUser = true;
   const next = getCurrentTheme() === 'dark' ? 'light' : 'dark';
   try {
     localStorage.setItem(THEME_STORAGE_KEY, next);
   } catch {
     // Ignore storage unavailability
   }
+  const root = document.documentElement;
+  root.classList.add('is-theme-switching');
   applyTheme(next);
+  void root.offsetHeight;
+  root.classList.remove('is-theme-switching');
   animateSoftFade(document.querySelector('.shell-scroll'));
   requestAnimationFrame(updateAllGliders);
 }
 
 function syncScheme() {
+  const explicitTheme = params.get('theme');
+  if (!themeOverriddenByUser && (explicitTheme === 'dark' || explicitTheme === 'light')) {
+    applyTheme(explicitTheme);
+    return;
+  }
+
   let savedTheme = '';
   try {
     savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || '';
@@ -173,12 +186,6 @@ function syncScheme() {
   }
   if (savedTheme === 'dark' || savedTheme === 'light') {
     applyTheme(savedTheme);
-    return;
-  }
-
-  const explicitTheme = params.get('theme');
-  if (explicitTheme === 'dark' || explicitTheme === 'light') {
-    applyTheme(explicitTheme);
     return;
   }
   const probe = document.createElement('span');
@@ -770,12 +777,34 @@ function renderProgressBars(container, badgeEl, items, totalOverride) {
   });
 }
 
+function formatHeatDetail(c) {
+  if (!c) return '';
+  if (c.isFuture) return `${c.date} (未来日期)`;
+  return `${c.date} · ${fmtCompact(c.totalTokens)} tok · ${c.apiCalls} 请求 · 命中 ${fmtPct(c.cacheHitRatio)}`;
+}
+
+function syncHeatSelectionUI(selectedDate, cellsByDate, infoEl) {
+  document.querySelectorAll('.heat-cell[data-date]').forEach((btn) => {
+    const isSel = Boolean(selectedDate && btn.dataset.date === selectedDate);
+    btn.classList.toggle('is-selected', isSel);
+    btn.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+  });
+  if (infoEl) {
+    const picked = selectedDate ? cellsByDate.get(selectedDate) : null;
+    infoEl.textContent = picked ? formatHeatDetail(picked) : (infoEl.dataset.defaultText || '点击或悬停日期格查看详情');
+  }
+}
+
 function renderHeatmapInto(box, infoEl, compact = false) {
   box.replaceChildren();
   const heatmap = state.snap?.usage?.heatmap;
   if (!heatmap || !Array.isArray(heatmap.cells) || !heatmap.cells.length) {
     box.appendChild(el('div', { className: 'empty-state', textContent: '暂无活动热力图数据' }));
     return;
+  }
+
+  if (infoEl && !infoEl.dataset.defaultText) {
+    infoEl.dataset.defaultText = infoEl.textContent || '点击或悬停日期格查看详情';
   }
 
   const weeks = heatmap.weeks || 24;
@@ -805,8 +834,10 @@ function renderHeatmapInto(box, infoEl, compact = false) {
 
   const cols = el('div', { className: 'heatmap-cols' });
   const colsByWeek = Array.from({ length: weeks }, () => el('div', { className: 'heatmap-week' }));
+  const cellsByDate = new Map();
 
   for (const c of heatmap.cells) {
+    cellsByDate.set(c.date, c);
     const val = c.totalTokens;
     let lvl = 0;
     if (!c.isFuture && val > 0) {
@@ -818,26 +849,44 @@ function renderHeatmapInto(box, infoEl, compact = false) {
       else lvl = 1;
     }
 
+    const isSelected = !c.isFuture && state.selectedHeatDate === c.date;
     const cellBtn = el('button', {
       type: 'button',
-      className: `heat-cell${c.isToday ? ' is-today' : ''}${c.isFuture ? ' is-future' : ''}`,
+      className: `heat-cell${c.isToday ? ' is-today' : ''}${c.isFuture ? ' is-future' : ''}${isSelected ? ' is-selected' : ''}`,
       'data-level': lvl,
+      'data-date': c.date,
+      'aria-pressed': isSelected ? 'true' : 'false',
       title: c.isFuture ? c.date : `${c.date}: ${fmtCompact(c.totalTokens)} tok · ${c.apiCalls} 请求`,
       'aria-label': `${c.date}: ${fmtCompact(c.totalTokens)} tokens, ${c.apiCalls} API calls`,
     });
 
     if (infoEl) {
-      const showDetails = () => {
-        infoEl.textContent = c.isFuture
-          ? `${c.date} (未来日期)`
-          : `${c.date} · ${fmtCompact(c.totalTokens)} tok · ${c.apiCalls} 请求 · 命中 ${fmtPct(c.cacheHitRatio)}`;
-      };
-      cellBtn.addEventListener('mouseenter', showDetails);
-      cellBtn.addEventListener('click', showDetails);
+      cellBtn.addEventListener('mouseenter', () => {
+        infoEl.textContent = formatHeatDetail(c);
+      });
+    }
+    if (!c.isFuture) {
+      cellBtn.addEventListener('click', () => {
+        state.selectedHeatDate = state.selectedHeatDate === c.date ? '' : c.date;
+        syncHeatSelectionUI(state.selectedHeatDate, cellsByDate, infoEl);
+      });
     }
 
     const wIdx = Math.max(0, Math.min(weeks - 1, c.weekIndex));
     colsByWeek[wIdx].appendChild(cellBtn);
+  }
+
+  if (infoEl) {
+    cols.addEventListener('mouseleave', () => {
+      const picked = state.selectedHeatDate ? cellsByDate.get(state.selectedHeatDate) : null;
+      infoEl.textContent = picked ? formatHeatDetail(picked) : infoEl.dataset.defaultText;
+    });
+    const initialPicked = state.selectedHeatDate ? cellsByDate.get(state.selectedHeatDate) : null;
+    if (initialPicked) {
+      infoEl.textContent = formatHeatDetail(initialPicked);
+    } else {
+      infoEl.textContent = infoEl.dataset.defaultText;
+    }
   }
 
   colsByWeek.forEach((col) => cols.appendChild(col));
@@ -1176,7 +1225,7 @@ function renderTurnChart() {
       const fill = d < 0 ? 'var(--ok)' : d >= 15_000 ? 'var(--orange)' : 'var(--bar-teal)';
 
       const rect = svgEl('rect', {
-        class: 'trend-bar-btn',
+        class: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
         'data-neg': d < 0 ? '1' : '0',
         x: (cx - barW / 2).toFixed(1),
         y: y.toFixed(1),
@@ -1187,6 +1236,7 @@ function renderTurnChart() {
         stroke: isSelected ? 'var(--text)' : 'none',
         'stroke-width': isSelected ? '1.2' : '0',
       });
+      rect.appendChild(svgEl('title', {}, [document.createTextNode(`#${t.seq} · ${d >= 0 ? '+' : ''}${fmtCompact(d)}`)]));
       rect.addEventListener('click', () => {
         state.pinnedTurnSeq = t.seq;
         renderTurnChart();
@@ -1217,7 +1267,7 @@ function renderTurnChart() {
       const isSelected = activeTurn && activeTurn.seq === t.seq;
 
       const rect = svgEl('rect', {
-        class: 'trend-bar-btn',
+        class: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
         x: (cx - barW / 2).toFixed(1),
         y: y.toFixed(1),
         width: barW.toFixed(1),
@@ -1226,6 +1276,7 @@ function renderTurnChart() {
         fill: isSelected ? 'var(--accent)' : 'var(--blue)',
         opacity: isSelected ? '1' : '0.84',
       });
+      rect.appendChild(svgEl('title', {}, [document.createTextNode(`#${t.seq} · ${fmtCompact(t.promptTokens)}`)]));
       rect.addEventListener('click', () => {
         state.pinnedTurnSeq = t.seq;
         renderTurnChart();
