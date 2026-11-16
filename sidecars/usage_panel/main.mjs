@@ -5,7 +5,7 @@
  * `127.0.0.1` for local verification and browser previews.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,11 +63,31 @@ function readPublicFile(name) {
   return BINARY_EXT_RE.test(name) ? readFileSync(fullPath) : readFileSync(fullPath, 'utf-8');
 }
 
+function computeUiVersion() {
+  return ['index.html', 'styles.css', 'app.js']
+    .map((name) => {
+      try {
+        const s = statSync(join(PUBLIC_DIR, name));
+        return `${Math.round(s.mtimeMs)}-${s.size}`;
+      } catch {
+        return '0';
+      }
+    })
+    .join('.');
+}
+
 async function startSidecarMode() {
   const { SidecarApp, Response } = await import('sidecar_sdk');
   const app = new SidecarApp();
 
-  app.page('/', () => readPublicFile('index.html'));
+  app.page(
+    '/',
+    () =>
+      new Response(readPublicFile('index.html'), {
+        contentType: 'text/html; charset=utf-8',
+        headers: { 'Cache-Control': 'no-store' },
+      }),
+  );
 
   for (const [route, [file, contentType]] of Object.entries(STATIC_ASSETS)) {
     app.api(
@@ -75,7 +95,7 @@ async function startSidecarMode() {
       () =>
         new Response(readPublicFile(file), {
           contentType,
-          headers: { 'Cache-Control': 'no-cache' },
+          headers: { 'Cache-Control': 'no-store' },
         }),
       'GET',
     );
@@ -85,7 +105,7 @@ async function startSidecarMode() {
     '/api/snapshot',
     async (data) => {
       const payload = await handleSnapshot(data, app.config.conversationId || '');
-      return new Response(JSON.stringify(payload), {
+      return new Response(JSON.stringify({ ...payload, uiVersion: computeUiVersion() }), {
         contentType: 'application/json; charset=utf-8',
         headers: { 'Cache-Control': 'no-store' },
       });
@@ -120,20 +140,20 @@ function startStandaloneMode() {
       }
 
       if (url.pathname === '/') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(readPublicFile('index.html'));
         return;
       }
 
       if (url.pathname === '/preload.js') {
-        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end('/* standalone preload shim */\n');
         return;
       }
 
       if (STATIC_ASSETS[url.pathname]) {
         const [file, contentType] = STATIC_ASSETS[url.pathname];
-        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-cache' });
+        res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
         res.end(readPublicFile(file));
         return;
       }
@@ -145,7 +165,7 @@ function startStandaloneMode() {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',
         });
-        res.end(JSON.stringify(payload));
+        res.end(JSON.stringify({ ...payload, uiVersion: computeUiVersion() }));
         return;
       }
 

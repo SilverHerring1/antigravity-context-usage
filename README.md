@@ -19,22 +19,22 @@
 
 <p align="center">
   <b>Dark · Home / 深色主页</b><br/>
-  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/wide-dark-home.png" alt="Wide Dark Home View" width="820" />
+  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/wide-dark-home.png" alt="Wide Dark Home View" width="820" />
 </p>
 
 <p align="center">
   <b>Dark · Context / 上下文构成与轨迹</b><br/>
-  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/wide-dark-context.png" alt="Wide Dark Context View" width="820" />
+  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/wide-dark-context.png" alt="Wide Dark Context View" width="820" />
 </p>
 
 <p align="center">
   <b>Dark · Trends / 趋势与 24 周热力图</b><br/>
-  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/wide-dark-trends.png" alt="Wide Dark Trends View" width="820" />
+  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/wide-dark-trends.png" alt="Wide Dark Trends View" width="820" />
 </p>
 
 <p align="center">
   <b>Light · Home / 浅色纯白模式</b><br/>
-  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/wide-light-home.png" alt="Wide Light Home View" width="820" />
+  <img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/wide-light-home.png" alt="Wide Light Home View" width="820" />
 </p>
 
 ### Narrow Sidecar / 窄屏侧边栏
@@ -47,10 +47,10 @@
     <th width="25%" align="center">Light · Home</th>
   </tr>
   <tr>
-    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/narrow-dark-home.png" alt="Narrow Dark Home View" width="100%" /></td>
-    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/narrow-dark-context.png" alt="Narrow Dark Context View" width="100%" /></td>
-    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/narrow-dark-trends.png" alt="Narrow Dark Trends View" width="100%" /></td>
-    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/assets/narrow-light-home.png" alt="Narrow Light Home View" width="100%" /></td>
+    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/narrow-dark-home.png" alt="Narrow Dark Home View" width="100%" /></td>
+    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/narrow-dark-context.png" alt="Narrow Dark Context View" width="100%" /></td>
+    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/narrow-dark-trends.png" alt="Narrow Dark Trends View" width="100%" /></td>
+    <td width="25%" align="center"><img src="https://raw.githubusercontent.com/SilverHerring1/antigravity-context-usage/0eaa4262e99b31c72b7053c5bcff6666bafde737/narrow-light-home.png" alt="Narrow Light Home View" width="100%" /></td>
   </tr>
 </table>
 

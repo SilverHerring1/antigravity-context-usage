@@ -46,11 +46,14 @@ const state = {
   selectedHeatDate: '',
   displayedHeroValue: null,
   heroRafId: 0,
+  homeMetersReady: false,
   animatePending: true,
   fadeOnRender: false,
+  bootUiVersion: '',
   etag: '',
   snap: null,
   fetching: false,
+  queuedForce: false,
 };
 
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -167,7 +170,6 @@ function toggleTheme() {
   applyTheme(next);
   void root.offsetHeight;
   root.classList.remove('is-theme-switching');
-  animateSoftFade(document.querySelector('.shell-scroll'));
   requestAnimationFrame(updateAllGliders);
 }
 
@@ -298,6 +300,421 @@ function buildSmoothPath(pts) {
     d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }
   return d;
+}
+
+const MORPH_SAMPLES = 72;
+const MORPH_DURATION_MS = 420;
+
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+
+function evalSmoothCurveAt(pts, tNorm) {
+  if (!pts.length) return { x: 0, y: 0 };
+  if (pts.length === 1) return { x: pts[0].x, y: pts[0].y };
+  const u = Math.max(0, Math.min(1, tNorm)) * (pts.length - 1);
+  const seg = Math.min(pts.length - 2, Math.floor(u));
+  const t = u - seg;
+  const p0 = pts[Math.max(0, seg - 1)];
+  const p1 = pts[seg];
+  const p2 = pts[seg + 1];
+  const p3 = pts[Math.min(pts.length - 1, seg + 2)];
+  const cp1x = p1.x + (p2.x - p0.x) / 6;
+  const cp1y = p1.y + (p2.y - p0.y) / 6;
+  const cp2x = p2.x - (p3.x - p1.x) / 6;
+  const cp2y = p2.y - (p3.y - p1.y) / 6;
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const t2 = t * t;
+  return {
+    x: mt2 * mt * p1.x + 3 * mt2 * t * cp1x + 3 * mt * t2 * cp2x + t2 * t * p2.x,
+    y: mt2 * mt * p1.y + 3 * mt2 * t * cp1y + 3 * mt * t2 * cp2y + t2 * t * p2.y,
+  };
+}
+
+function sampleCurvePoints(pts, baselineY, xMin, xMax, count = MORPH_SAMPLES) {
+  const out = new Array(count);
+  if (pts.length === 1) {
+    const y = Math.min(baselineY, pts[0].y);
+    for (let i = 0; i < count; i += 1) {
+      const x = xMin + (count === 1 ? 0.5 : i / (count - 1)) * (xMax - xMin);
+      out[i] = { x, y };
+    }
+    return out;
+  }
+  for (let i = 0; i < count; i += 1) {
+    const p = evalSmoothCurveAt(pts, count === 1 ? 0 : i / (count - 1));
+    out[i] = { x: p.x, y: Math.min(baselineY, p.y) };
+  }
+  return out;
+}
+
+function buildPolylinePath(pts) {
+  if (!pts.length) return '';
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 1; i < pts.length; i += 1) {
+    d += ` L ${pts[i].x.toFixed(1)} ${pts[i].y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function buildClosedArea(lineD, pts, baselineY) {
+  if (!lineD || !pts.length) return '';
+  return `${lineD} L ${pts[pts.length - 1].x.toFixed(1)} ${baselineY.toFixed(1)} L ${pts[0].x.toFixed(1)} ${baselineY.toFixed(1)} Z`;
+}
+
+function flatBaselineSamples(xMin, xMax, baselineY, count = MORPH_SAMPLES) {
+  const out = new Array(count);
+  for (let i = 0; i < count; i += 1) {
+    out[i] = { x: xMin + (count === 1 ? 0.5 : i / (count - 1)) * (xMax - xMin), y: baselineY };
+  }
+  return out;
+}
+
+function renderMorphLineSvg(box, cfg) {
+  const { chartId, w, h, xMin, xMax, baselineY, ariaLabel, buildDefs, buildGridNodes, series, animate } = cfg;
+  let meta = box._morphState;
+  const canReuse = Boolean(
+    meta &&
+      meta.kind === 'line' &&
+      meta.chartId === chartId &&
+      meta.svg?.isConnected &&
+      meta.seriesKeys.length === series.length &&
+      series.every((s, idx) => meta.seriesKeys[idx] === s.key),
+  );
+
+  if (meta?.rafId) {
+    cancelAnimationFrame(meta.rafId);
+    meta.rafId = 0;
+  }
+
+  let svg;
+  let gridG;
+  let seriesG;
+  const prevSamplesMap = {};
+
+  if (canReuse) {
+    svg = meta.svg;
+    gridG = meta.gridG;
+    seriesG = meta.seriesG;
+    if (ariaLabel) svg.setAttribute('aria-label', ariaLabel);
+    for (const s of series) {
+      prevSamplesMap[s.key] = meta.currentSamples[s.key] || flatBaselineSamples(xMin, xMax, baselineY);
+    }
+  } else {
+    svg = svgEl('svg', {
+      class: 'chart-svg',
+      viewBox: `0 0 ${w} ${h}`,
+      role: ariaLabel ? 'img' : null,
+      'aria-label': ariaLabel || null,
+    });
+    if (buildDefs) svg.appendChild(buildDefs());
+    gridG = svgEl('g', { 'data-layer': 'grid' });
+    seriesG = svgEl('g', { 'data-layer': 'series' });
+    svg.appendChild(gridG);
+    svg.appendChild(seriesG);
+
+    for (const s of series) {
+      if (s.fill) {
+        seriesG.appendChild(svgEl('path', { fill: s.fill, 'data-morph-area': s.key }));
+      }
+      seriesG.appendChild(
+        svgEl('path', {
+          fill: 'none',
+          stroke: s.stroke,
+          'stroke-width': String(s.strokeWidth ?? 2),
+          'stroke-linecap': 'round',
+          'data-morph-line': s.key,
+        }),
+      );
+      prevSamplesMap[s.key] = flatBaselineSamples(xMin, xMax, baselineY);
+    }
+    box.replaceChildren(svg);
+  }
+
+  gridG.replaceChildren(...buildGridNodes());
+
+  const targetSamplesMap = {};
+  const exactPathsMap = {};
+  for (const s of series) {
+    const normalizedRaw =
+      s.pts.length === 1
+        ? [
+            { x: xMin, y: s.pts[0].y },
+            { x: xMax, y: s.pts[0].y },
+          ]
+        : s.pts;
+    targetSamplesMap[s.key] = sampleCurvePoints(normalizedRaw, baselineY, xMin, xMax);
+    const lineD = buildSmoothPath(normalizedRaw);
+    exactPathsMap[s.key] = {
+      lineD,
+      areaD: s.fill ? buildClosedArea(lineD, normalizedRaw, baselineY) : '',
+    };
+  }
+
+  const nextMeta = {
+    kind: 'line',
+    chartId,
+    svg,
+    gridG,
+    seriesG,
+    seriesKeys: series.map((s) => s.key),
+    currentSamples: {},
+    rafId: 0,
+  };
+  box._morphState = nextMeta;
+
+  const commitFinal = () => {
+    for (const s of series) {
+      const lineEl = seriesG.querySelector(`[data-morph-line="${s.key}"]`);
+      const areaEl = s.fill ? seriesG.querySelector(`[data-morph-area="${s.key}"]`) : null;
+      if (lineEl) lineEl.setAttribute('d', exactPathsMap[s.key].lineD);
+      if (areaEl) areaEl.setAttribute('d', exactPathsMap[s.key].areaD);
+      nextMeta.currentSamples[s.key] = targetSamplesMap[s.key];
+    }
+  };
+
+  if (!animate || prefersReducedMotion()) {
+    commitFinal();
+    return;
+  }
+
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, Math.max(0, (now - t0) / MORPH_DURATION_MS));
+    const k = easeOutCubic(t);
+    for (const s of series) {
+      const fromPts = prevSamplesMap[s.key];
+      const toPts = targetSamplesMap[s.key];
+      const cur = new Array(toPts.length);
+      for (let i = 0; i < toPts.length; i += 1) {
+        const f = fromPts[i] || toPts[i];
+        cur[i] = {
+          x: f.x + (toPts[i].x - f.x) * k,
+          y: Math.min(baselineY, f.y + (toPts[i].y - f.y) * k),
+        };
+      }
+      nextMeta.currentSamples[s.key] = cur;
+      const lineD = buildPolylinePath(cur);
+      const lineEl = seriesG.querySelector(`[data-morph-line="${s.key}"]`);
+      const areaEl = s.fill ? seriesG.querySelector(`[data-morph-area="${s.key}"]`) : null;
+      if (lineEl) lineEl.setAttribute('d', lineD);
+      if (areaEl) areaEl.setAttribute('d', buildClosedArea(lineD, cur, baselineY));
+    }
+
+    if (t < 1) {
+      nextMeta.rafId = requestAnimationFrame(step);
+    } else {
+      nextMeta.rafId = 0;
+      commitFinal();
+    }
+  };
+  nextMeta.rafId = requestAnimationFrame(step);
+}
+
+function renderMorphBarsSvg(box, cfg) {
+  const { chartId, w, h, baselineY, ariaLabel, buildGridNodes, buildOverlayNodes, items, animate } = cfg;
+  let meta = box._morphState;
+  const canReuse = Boolean(
+    meta && meta.kind === 'bars' && meta.chartId === chartId && meta.svg?.isConnected,
+  );
+
+  if (meta?.rafId) {
+    cancelAnimationFrame(meta.rafId);
+    meta.rafId = 0;
+  }
+
+  let svg;
+  let gridG;
+  let seriesG;
+  let overlayG;
+  const prevRects = canReuse ? new Map(meta.currentRects) : new Map();
+
+  if (canReuse) {
+    svg = meta.svg;
+    gridG = meta.gridG;
+    seriesG = meta.seriesG;
+    overlayG = meta.overlayG;
+    if (ariaLabel) svg.setAttribute('aria-label', ariaLabel);
+  } else {
+    svg = svgEl('svg', {
+      class: 'chart-svg',
+      viewBox: `0 0 ${w} ${h}`,
+      role: ariaLabel ? 'img' : null,
+      'aria-label': ariaLabel || null,
+    });
+    gridG = svgEl('g', { 'data-layer': 'grid' });
+    seriesG = svgEl('g', { 'data-layer': 'series' });
+    overlayG = svgEl('g', { 'data-layer': 'overlays' });
+    svg.appendChild(gridG);
+    svg.appendChild(seriesG);
+    svg.appendChild(overlayG);
+    box.replaceChildren(svg);
+  }
+
+  gridG.replaceChildren(...buildGridNodes());
+  overlayG.replaceChildren(...(buildOverlayNodes ? buildOverlayNodes() : []));
+
+  const existingNodes = new Map();
+  seriesG.querySelectorAll('rect[data-bar-key]').forEach((node) => {
+    existingNodes.set(node.getAttribute('data-bar-key'), node);
+  });
+
+  const nextKeys = new Set(items.map((it) => it.key));
+  const exiting = [];
+  for (const [k, node] of existingNodes.entries()) {
+    if (!nextKeys.has(k)) {
+      if (animate && !prefersReducedMotion() && prevRects.has(k)) {
+        node.style.pointerEvents = 'none';
+        exiting.push({ key: k, node, from: prevRects.get(k) });
+      } else {
+        node.remove();
+      }
+      existingNodes.delete(k);
+    }
+  }
+
+  const entries = items.map((item) => {
+    let rect = existingNodes.get(item.key);
+    const prev = prevRects.get(item.key);
+    const originY = item.originY ?? baselineY;
+    const from = prev || { x: item.x, y: originY, width: item.width, height: 0, opacity: 0.25 };
+
+    if (!rect) {
+      rect = svgEl('rect', { 'data-bar-key': item.key });
+      seriesG.appendChild(rect);
+    }
+    rect.setAttribute('class', item.className || '');
+    if (item.neg !== undefined) rect.setAttribute('data-neg', item.neg ? '1' : '0');
+    else rect.removeAttribute('data-neg');
+    rect.setAttribute('rx', String(item.rx ?? 2.5));
+    rect.setAttribute('fill', item.fill);
+    rect.setAttribute('stroke', item.stroke || 'none');
+    rect.setAttribute('stroke-width', String(item.strokeWidth ?? 0));
+    rect.onclick = item.onClick || null;
+
+    let titleEl = rect.querySelector('title');
+    if (item.title) {
+      if (!titleEl) {
+        titleEl = svgEl('title');
+        rect.appendChild(titleEl);
+      }
+      titleEl.textContent = item.title;
+    } else if (titleEl) {
+      titleEl.remove();
+    }
+
+    return { item, rect, from };
+  });
+
+  const nextMeta = {
+    kind: 'bars',
+    chartId,
+    svg,
+    gridG,
+    seriesG,
+    overlayG,
+    currentRects: new Map(),
+    rafId: 0,
+  };
+  box._morphState = nextMeta;
+
+  const commitFinal = () => {
+    for (const ex of exiting) ex.node.remove();
+    for (const { item, rect } of entries) {
+      rect.setAttribute('x', item.x.toFixed(1));
+      rect.setAttribute('y', item.y.toFixed(1));
+      rect.setAttribute('width', item.width.toFixed(1));
+      rect.setAttribute('height', item.height.toFixed(1));
+      rect.setAttribute('opacity', String(item.opacity ?? 1));
+      nextMeta.currentRects.set(item.key, {
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+        opacity: item.opacity ?? 1,
+      });
+    }
+  };
+
+  if (!animate || prefersReducedMotion()) {
+    commitFinal();
+    return;
+  }
+
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, Math.max(0, (now - t0) / MORPH_DURATION_MS));
+    const k = easeOutCubic(t);
+
+    for (const { item, rect, from } of entries) {
+      const targetOp = item.opacity ?? 1;
+      const fromOp = from.opacity ?? targetOp;
+      const cur = {
+        x: from.x + (item.x - from.x) * k,
+        y: from.y + (item.y - from.y) * k,
+        width: Math.max(0.5, from.width + (item.width - from.width) * k),
+        height: Math.max(0, from.height + (item.height - from.height) * k),
+        opacity: fromOp + (targetOp - fromOp) * k,
+      };
+      rect.setAttribute('x', cur.x.toFixed(1));
+      rect.setAttribute('y', cur.y.toFixed(1));
+      rect.setAttribute('width', cur.width.toFixed(1));
+      rect.setAttribute('height', cur.height.toFixed(1));
+      rect.setAttribute('opacity', cur.opacity.toFixed(3));
+      nextMeta.currentRects.set(item.key, cur);
+    }
+
+    for (const ex of exiting) {
+      const curH = Math.max(0, ex.from.height * (1 - k));
+      const curY = ex.from.y + (ex.from.height - curH);
+      ex.node.setAttribute('y', curY.toFixed(1));
+      ex.node.setAttribute('height', curH.toFixed(1));
+      ex.node.setAttribute('opacity', (1 - k).toFixed(3));
+    }
+
+    if (t < 1) {
+      nextMeta.rafId = requestAnimationFrame(step);
+    } else {
+      nextMeta.rafId = 0;
+      commitFinal();
+    }
+  };
+  nextMeta.rafId = requestAnimationFrame(step);
+}
+
+function tweenProgressBar(bar, targetRatio) {
+  const clamped = Math.max(0.01, Math.min(1, Number(targetRatio) || 0));
+  if (bar._progAnim?.rafId) {
+    cancelAnimationFrame(bar._progAnim.rafId);
+    bar._progAnim.rafId = 0;
+  }
+  const hasPrev = typeof bar._progVal === 'number';
+  const fromVal = hasPrev ? bar._progVal : clamped;
+  if (!hasPrev || Math.abs(clamped - fromVal) < 0.0005 || prefersReducedMotion()) {
+    bar._progVal = clamped;
+    bar.value = clamped;
+    return;
+  }
+
+  const t0 = performance.now();
+  const animState = { rafId: 0 };
+  bar._progAnim = animState;
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / MORPH_DURATION_MS);
+    const k = easeOutCubic(t);
+    const val = fromVal + (clamped - fromVal) * k;
+    bar._progVal = val;
+    bar.value = val;
+    if (t < 1) {
+      animState.rafId = requestAnimationFrame(step);
+    } else {
+      animState.rafId = 0;
+      bar._progVal = clamped;
+      bar.value = clamped;
+    }
+  };
+  animState.rafId = requestAnimationFrame(step);
 }
 
 function niceCeil(maxVal) {
@@ -454,51 +871,6 @@ function animateSoftFade(node) {
   );
 }
 
-function animateSvgChart(svg, kind) {
-  if (!svg || prefersReducedMotion() || typeof Element.prototype.animate !== 'function') return;
-  if (kind === 'bars') {
-    const bars = Array.from(svg.querySelectorAll('rect'));
-    const maxDelay = 120;
-    const step = bars.length > 1 ? Math.min(8, maxDelay / (bars.length - 1)) : 0;
-    bars.forEach((rect, i) => {
-      const origin = rect.dataset.neg === '1' ? 'center top' : 'center bottom';
-      rect.style.transformBox = 'fill-box';
-      rect.style.transformOrigin = origin;
-      rect.animate(
-        [
-          { transform: 'scaleY(0.06)', opacity: 0.35 },
-          { transform: 'scaleY(1)', opacity: 1 },
-        ],
-        {
-          duration: 300,
-          delay: Math.round(i * step),
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-          fill: 'backwards',
-        },
-      );
-    });
-    return;
-  }
-
-  if (kind === 'line') {
-    svg.querySelectorAll('[data-anim-area="1"]').forEach((area) => {
-      area.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: 'ease-out' });
-    });
-    svg.querySelectorAll('[data-anim-line="1"]').forEach((line) => {
-      const len = typeof line.getTotalLength === 'function' ? Math.max(1, line.getTotalLength()) : 0;
-      if (!len) return;
-      line.style.strokeDasharray = `${len}`;
-      const anim = line.animate(
-        [{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
-        { duration: 440, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
-      );
-      anim.onfinish = () => {
-        line.style.strokeDasharray = '';
-      };
-    });
-  }
-}
-
 function animatePanelEnter(panelEl) {
   if (!panelEl || prefersReducedMotion() || typeof panelEl.animate !== 'function') return;
   panelEl._panelAnim?.cancel();
@@ -612,7 +984,6 @@ function wireInteractions() {
       syncGroupActive('[data-range]', 'range', state.rangeDays);
       syncGroupActive('[data-hero-mode]', 'heroMode', state.heroMode);
       state.animatePending = true;
-      state.fadeOnRender = true;
       refreshNow(true);
       return;
     }
@@ -628,10 +999,8 @@ function wireInteractions() {
       syncGroupActive('[data-ref]', 'ref', state.refMode);
       if (state.tab === 'home') {
         renderHomeTab();
-        animateSoftFade($('homeQuotaRight')?.closest('.shell-section'));
       } else if (state.tab === 'context') {
         renderContextTab();
-        animateSoftFade($('ctxCompBar')?.closest('.shell-section'));
       }
       return;
     }
@@ -641,7 +1010,6 @@ function wireInteractions() {
       state.animatePending = true;
       renderTurnChart();
       state.animatePending = false;
-      animateSoftFade($('turnChartBox'));
       return;
     }
     if (btn.dataset.evFilter) {
@@ -663,7 +1031,6 @@ function wireInteractions() {
       syncGroupActive('[data-range]', 'range', state.rangeDays);
       syncGroupActive('[data-period]', 'period', state.rangeDays);
       state.animatePending = true;
-      state.fadeOnRender = true;
       refreshNow(true);
       return;
     }
@@ -671,7 +1038,6 @@ function wireInteractions() {
       state.usageScope = btn.dataset.scope;
       syncGroupActive('[data-scope]', 'scope', state.usageScope);
       state.animatePending = true;
-      state.fadeOnRender = true;
       refreshNow(true);
       return;
     }
@@ -681,7 +1047,6 @@ function wireInteractions() {
       state.animatePending = true;
       renderTokensChart();
       state.animatePending = false;
-      animateSoftFade($('tokensChartBox'));
       return;
     }
     if (btn.dataset.tokStyle) {
@@ -690,7 +1055,6 @@ function wireInteractions() {
       state.animatePending = true;
       renderTokensChart();
       state.animatePending = false;
-      animateSoftFade($('tokensChartBox'));
       return;
     }
     if (btn.dataset.jumpTab) {
@@ -702,7 +1066,6 @@ function wireInteractions() {
 
 // ---------- Shared Components ----------
 function renderCompositionBar(container, composition, refTokens) {
-  container.replaceChildren();
   const cats = composition?.categories || [];
   const cap = Math.max(1, refTokens);
   const occupied = cats.reduce((acc, c) => acc + (c.tokens || 0), 0);
@@ -711,69 +1074,168 @@ function renderCompositionBar(container, composition, refTokens) {
   const bufferTokens = occupied > 0 ? Math.min(freeRaw, Math.round(cap * 0.04)) : 0;
   const freeTokens = Math.max(0, freeRaw - bufferTokens);
 
+  const specs = [];
   for (const c of cats) {
     if (!c.tokens || c.tokens <= 0) continue;
     const pct = (c.tokens / denom) * 100;
-    container.appendChild(
-      el('div', {
-        className: `comp-seg tone-${c.key}`,
-        style: { width: `${pct.toFixed(2)}%` },
-        title: `${c.label}: ${fmtExact(c.tokens)} tokens (${pct.toFixed(1)}%)`,
-      }),
-    );
+    specs.push({
+      key: c.key,
+      className: `comp-seg tone-${c.key}`,
+      width: `${pct.toFixed(2)}%`,
+      title: `${c.label}: ${fmtExact(c.tokens)} tokens (${pct.toFixed(1)}%)`,
+    });
   }
   if (bufferTokens > 0) {
-    container.appendChild(
-      el('div', {
-        className: 'comp-seg tone-buffer',
-        style: { width: `${((bufferTokens / denom) * 100).toFixed(2)}%` },
-        title: `自动压缩安全缓冲: ~${fmtExact(bufferTokens)} tokens`,
-      }),
-    );
+    specs.push({
+      key: 'buffer',
+      className: 'comp-seg tone-buffer',
+      width: `${((bufferTokens / denom) * 100).toFixed(2)}%`,
+      title: `自动压缩安全缓冲: ~${fmtExact(bufferTokens)} tokens`,
+    });
   }
   if (freeTokens > 0 || occupied === 0) {
-    container.appendChild(
-      el('div', {
-        className: 'comp-seg tone-free',
-        title: `剩余可用窗口: ${fmtExact(freeTokens)} tokens`,
-      }),
-    );
+    specs.push({
+      key: 'free',
+      className: 'comp-seg tone-free',
+      width: null,
+      title: `剩余可用窗口: ${fmtExact(freeTokens)} tokens`,
+    });
+  }
+
+  const existingByKey = new Map();
+  for (const child of Array.from(container.children)) {
+    const k = child.dataset?.segKey;
+    if (k) existingByKey.set(k, child);
+  }
+
+  const targetKeys = new Set(specs.map((s) => s.key));
+  const reduced = prefersReducedMotion();
+  for (const [k, node] of existingByKey.entries()) {
+    if (targetKeys.has(k)) continue;
+    if (k === 'free' || reduced) {
+      node.remove();
+      existingByKey.delete(k);
+    } else if (!node.classList.contains('is-exiting')) {
+      node.classList.add('is-exiting');
+      node.style.width = '0%';
+      node._exitTimer = setTimeout(() => {
+        if (node.classList.contains('is-exiting')) node.remove();
+      }, 370);
+    }
+  }
+
+  const firstPaint = !container._compInit;
+  container._compInit = true;
+  const newlyCreated = [];
+  let cursor = null;
+  for (const s of specs) {
+    let node = existingByKey.get(s.key);
+    const isNew = !node;
+    if (!node) {
+      node = el('div', {
+        className: s.className,
+        'data-seg-key': s.key,
+        title: s.title,
+      });
+      if (!firstPaint && !reduced && s.width) node.style.width = '0%';
+      else if (s.width) node.style.width = s.width;
+    } else {
+      if (node._exitTimer) {
+        clearTimeout(node._exitTimer);
+        node._exitTimer = 0;
+      }
+      node.className = s.className;
+      node.title = s.title;
+    }
+
+    const expectedNext = cursor ? cursor.nextSibling : container.firstChild;
+    if (node !== expectedNext) {
+      container.insertBefore(node, expectedNext);
+    }
+    cursor = node;
+
+    if (isNew && !firstPaint && !reduced && s.width) {
+      newlyCreated.push([node, s.width]);
+    } else if (!isNew) {
+      if (s.width) node.style.width = s.width;
+      else node.style.removeProperty('width');
+    }
+  }
+
+  if (newlyCreated.length) {
+    void container.offsetWidth;
+    for (const [node, w] of newlyCreated) {
+      node.style.width = w;
+    }
   }
 }
 
 function renderProgressBars(container, badgeEl, items, totalOverride) {
-  container.replaceChildren();
   const total = typeof totalOverride === 'number'
     ? totalOverride
     : items.reduce((acc, item) => acc + (item.count || 0), 0);
   if (badgeEl) badgeEl.textContent = `${fmtExact(total)} 次`;
 
   if (!items.length || total <= 0) {
-    container.appendChild(el('div', { className: 'empty-state', textContent: '暂无工具调用记录' }));
+    container.replaceChildren(el('div', { className: 'empty-state', textContent: '暂无工具调用记录' }));
     return;
   }
 
+  const existingByKey = new Map();
+  for (const row of Array.from(container.children)) {
+    const k = row.dataset?.itemKey;
+    if (k) existingByKey.set(k, row);
+    else row.remove();
+  }
+
+  const keepKeys = new Set(items.map((item) => item.name));
+  for (const [k, row] of existingByKey.entries()) {
+    if (!keepKeys.has(k)) {
+      row.remove();
+      existingByKey.delete(k);
+    }
+  }
+
+  let cursor = null;
   items.forEach((item, idx) => {
     const ratio = typeof item.share === 'number' ? item.share : item.count / total;
+    const clamped = Math.max(0.01, Math.min(1, ratio));
     const tone = TOOL_TONES[idx % TOOL_TONES.length];
-    const bar = el('progress', {
-      className: 'ios-progress',
-      max: '1',
-      value: Math.max(0.01, Math.min(1, ratio)).toFixed(4),
-      'aria-label': `${item.name} 占比 ${(ratio * 100).toFixed(1)}%`,
-    });
-    bar.style.setProperty('--tone-color', tone);
+    let row = existingByKey.get(item.name);
 
-    container.appendChild(
-      el('div', { className: 'progress-row' }, [
+    if (!row) {
+      const bar = el('progress', {
+        className: 'ios-progress',
+        max: '1',
+        value: clamped.toFixed(4),
+        'aria-label': `${item.name} 占比 ${(ratio * 100).toFixed(1)}%`,
+      });
+      bar.style.setProperty('--tone-color', tone);
+      bar._progVal = clamped;
+      row = el('div', { className: 'progress-row', 'data-item-key': item.name }, [
         el('span', { className: 'progress-name', textContent: item.name, title: item.name }),
         bar,
         el('div', { className: 'progress-stats' }, [
-          el('span', { textContent: fmtExact(item.count) }),
-          el('span', { className: 'progress-pct', textContent: `${(ratio * 100).toFixed(1)}%` }),
+          el('span', { 'data-stat-count': '1', textContent: fmtExact(item.count) }),
+          el('span', { className: 'progress-pct', 'data-stat-pct': '1', textContent: `${(ratio * 100).toFixed(1)}%` }),
         ]),
-      ]),
-    );
+      ]);
+    } else {
+      const bar = row.querySelector('progress.ios-progress');
+      const countEl = row.querySelector('[data-stat-count]');
+      const pctEl = row.querySelector('[data-stat-pct]');
+      if (bar) {
+        bar.style.setProperty('--tone-color', tone);
+        bar.setAttribute('aria-label', `${item.name} 占比 ${(ratio * 100).toFixed(1)}%`);
+        tweenProgressBar(bar, clamped);
+      }
+      if (countEl) countEl.textContent = fmtExact(item.count);
+      if (pctEl) pctEl.textContent = `${(ratio * 100).toFixed(1)}%`;
+    }
+
+    const expectedNext = cursor ? cursor.nextSibling : container.firstChild;
+    if (row !== expectedNext) container.insertBefore(row, expectedNext);
+    cursor = row;
   });
 }
 
@@ -796,10 +1258,11 @@ function syncHeatSelectionUI(selectedDate, cellsByDate, infoEl) {
 }
 
 function renderHeatmapInto(box, infoEl, compact = false) {
-  box.replaceChildren();
   const heatmap = state.snap?.usage?.heatmap;
   if (!heatmap || !Array.isArray(heatmap.cells) || !heatmap.cells.length) {
-    box.appendChild(el('div', { className: 'empty-state', textContent: '暂无活动热力图数据' }));
+    box._heatSignature = '';
+    box._heatBtns = null;
+    box.replaceChildren(el('div', { className: 'empty-state', textContent: '暂无活动热力图数据' }));
     return;
   }
 
@@ -808,8 +1271,43 @@ function renderHeatmapInto(box, infoEl, compact = false) {
   }
 
   const weeks = heatmap.weeks || 24;
-  box.style.setProperty('--heat-weeks', String(weeks));
   const maxVal = Math.max(1, heatmap.maxTokens);
+  const sig = `${compact ? '1' : '0'}|${weeks}|${heatmap.cells[0]?.date}|${heatmap.cells[heatmap.cells.length - 1]?.date}`;
+  const computeLvl = (c) => {
+    if (c.isFuture || c.totalTokens <= 0) return 0;
+    const ratio = c.totalTokens / maxVal;
+    if (ratio >= 0.88) return 5;
+    if (ratio >= 0.62) return 4;
+    if (ratio >= 0.36) return 3;
+    if (ratio >= 0.14) return 2;
+    return 1;
+  };
+
+  if (box._heatSignature === sig && box._heatBtns && box.firstElementChild) {
+    const cellsByDate = new Map();
+    for (const c of heatmap.cells) {
+      cellsByDate.set(c.date, c);
+      const cellBtn = box._heatBtns.get(c.date);
+      if (!cellBtn) continue;
+      cellBtn._heatCell = c;
+      const lvl = computeLvl(c);
+      const isSelected = !c.isFuture && state.selectedHeatDate === c.date;
+      cellBtn.setAttribute('data-level', String(lvl));
+      cellBtn.classList.toggle('is-selected', isSelected);
+      cellBtn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      cellBtn.title = c.isFuture ? c.date : `${c.date}: ${fmtCompact(c.totalTokens)} tok · ${c.apiCalls} 请求`;
+      cellBtn.setAttribute('aria-label', `${c.date}: ${fmtCompact(c.totalTokens)} tokens, ${c.apiCalls} API calls`);
+    }
+    box._heatCellsByDate = cellsByDate;
+    if (infoEl) {
+      const picked = state.selectedHeatDate ? cellsByDate.get(state.selectedHeatDate) : null;
+      infoEl.textContent = picked ? formatHeatDetail(picked) : infoEl.dataset.defaultText;
+    }
+    return;
+  }
+
+  box.replaceChildren();
+  box.style.setProperty('--heat-weeks', String(weeks));
 
   const monthRow = el('div', { className: 'heatmap-months' }, [el('span')]);
   let lastMonth = '';
@@ -835,20 +1333,11 @@ function renderHeatmapInto(box, infoEl, compact = false) {
   const cols = el('div', { className: 'heatmap-cols' });
   const colsByWeek = Array.from({ length: weeks }, () => el('div', { className: 'heatmap-week' }));
   const cellsByDate = new Map();
+  const btnsByDate = new Map();
 
   for (const c of heatmap.cells) {
     cellsByDate.set(c.date, c);
-    const val = c.totalTokens;
-    let lvl = 0;
-    if (!c.isFuture && val > 0) {
-      const ratio = val / maxVal;
-      if (ratio >= 0.88) lvl = 5;
-      else if (ratio >= 0.62) lvl = 4;
-      else if (ratio >= 0.36) lvl = 3;
-      else if (ratio >= 0.14) lvl = 2;
-      else lvl = 1;
-    }
-
+    const lvl = computeLvl(c);
     const isSelected = !c.isFuture && state.selectedHeatDate === c.date;
     const cellBtn = el('button', {
       type: 'button',
@@ -859,16 +1348,18 @@ function renderHeatmapInto(box, infoEl, compact = false) {
       title: c.isFuture ? c.date : `${c.date}: ${fmtCompact(c.totalTokens)} tok · ${c.apiCalls} 请求`,
       'aria-label': `${c.date}: ${fmtCompact(c.totalTokens)} tokens, ${c.apiCalls} API calls`,
     });
+    cellBtn._heatCell = c;
+    btnsByDate.set(c.date, cellBtn);
 
     if (infoEl) {
       cellBtn.addEventListener('mouseenter', () => {
-        infoEl.textContent = formatHeatDetail(c);
+        infoEl.textContent = formatHeatDetail(cellBtn._heatCell);
       });
     }
     if (!c.isFuture) {
       cellBtn.addEventListener('click', () => {
         state.selectedHeatDate = state.selectedHeatDate === c.date ? '' : c.date;
-        syncHeatSelectionUI(state.selectedHeatDate, cellsByDate, infoEl);
+        syncHeatSelectionUI(state.selectedHeatDate, box._heatCellsByDate || cellsByDate, infoEl);
       });
     }
 
@@ -876,9 +1367,14 @@ function renderHeatmapInto(box, infoEl, compact = false) {
     colsByWeek[wIdx].appendChild(cellBtn);
   }
 
+  box._heatSignature = sig;
+  box._heatBtns = btnsByDate;
+  box._heatCellsByDate = cellsByDate;
+
   if (infoEl) {
     cols.addEventListener('mouseleave', () => {
-      const picked = state.selectedHeatDate ? cellsByDate.get(state.selectedHeatDate) : null;
+      const map = box._heatCellsByDate || cellsByDate;
+      const picked = state.selectedHeatDate ? map.get(state.selectedHeatDate) : null;
       infoEl.textContent = picked ? formatHeatDetail(picked) : infoEl.dataset.defaultText;
     });
     const initialPicked = state.selectedHeatDate ? cellsByDate.get(state.selectedHeatDate) : null;
@@ -912,7 +1408,8 @@ function renderHeaderAndPopovers() {
 
   const labelEl = $('sessionPickerLabel');
   if (labelEl) {
-    labelEl.textContent = selected ? `${selected.title || selected.shortId}` : '选择对话会话';
+    const titleOverride = params.get('title');
+    labelEl.textContent = titleOverride || (selected ? `${selected.title || selected.shortId}` : '选择对话会话');
   }
 
   const jumpBtn = $('jumpActiveBtn');
@@ -1000,13 +1497,26 @@ function renderHomeTab() {
   pctBadge.classList.toggle('is-high', pct >= 88);
 
   // Glossy quota meters (Image 3 vibe)
+  const qFill = $('homeQuotaFill');
+  const cFill = $('homeCacheFill');
+  const snapInit = !state.homeMetersReady;
+  if (snapInit) {
+    qFill?.classList.add('no-trans');
+    cFill?.classList.add('no-trans');
+  }
   $('homeQuotaRight').textContent = `${fmtCompact(promptTokens)} / ${fmtCompact(refTokens)}`;
-  $('homeQuotaFill').style.width = `${Math.min(100, Math.max(2, pct)).toFixed(1)}%`;
+  if (qFill) qFill.style.width = `${Math.min(100, Math.max(2, pct)).toFixed(1)}%`;
   $('homeQuotaMetaL').textContent = `距上次压缩 ${s.turnsSinceCompaction ?? 0} 轮 · 已压缩 ${s.totals?.checkpointCount || 0} 次`;
   $('homeQuotaMetaR').textContent = `剩余 ${(Math.max(0, 100 - pct)).toFixed(1)}%`;
 
   $('homeCacheRight').textContent = fmtPct(cacheRatio);
-  $('homeCacheFill').style.width = `${Math.min(100, cacheRatio * 100).toFixed(1)}%`;
+  if (cFill) cFill.style.width = `${Math.min(100, cacheRatio * 100).toFixed(1)}%`;
+  if (snapInit) {
+    void qFill?.offsetWidth;
+    qFill?.classList.remove('no-trans');
+    cFill?.classList.remove('no-trans');
+    state.homeMetersReady = true;
+  }
 
   // Composition bar + compact rows
   const comp = getEffectiveComposition(s);
@@ -1044,9 +1554,9 @@ function renderHomeTab() {
 }
 
 function renderHomeSparkline(box, days) {
-  box.replaceChildren();
   if (!days.length) {
-    box.appendChild(el('div', { className: 'empty-state', textContent: '暂无近期趋势数据' }));
+    box._morphState = null;
+    box.replaceChildren(el('div', { className: 'empty-state', textContent: '暂无近期趋势数据' }));
     return;
   }
   const w = 440;
@@ -1057,25 +1567,30 @@ function renderHomeSparkline(box, days) {
   const innerH = h - padY * 2;
   const maxY = Math.max(1, ...days.map((d) => d.totalTokens || 0));
 
-  const svg = svgEl('svg', { class: 'chart-svg', viewBox: `0 0 ${w} ${h}` });
-  const defs = svgEl('defs');
-  const grad = svgEl('linearGradient', { id: 'homeSparkGrad', x1: '0', y1: '0', x2: '0', y2: '1' });
-  grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.32' }));
-  grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.01' }));
-  defs.appendChild(grad);
-  svg.appendChild(defs);
-
   const pts = days.map((d, i) => ({
     x: padX + (days.length === 1 ? innerW / 2 : (i / (days.length - 1)) * innerW),
     y: padY + innerH * (1 - (d.totalTokens || 0) / maxY),
   }));
-  const dStr = buildSmoothPath(pts);
-  const area = `${dStr} L ${pts[pts.length - 1].x.toFixed(1)} ${(h - padY).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(h - padY).toFixed(1)} Z`;
 
-  svg.appendChild(svgEl('path', { d: area, fill: 'url(#homeSparkGrad)', 'data-anim-area': '1' }));
-  svg.appendChild(svgEl('path', { d: dStr, fill: 'none', stroke: 'var(--blue)', 'stroke-width': '2', 'stroke-linecap': 'round', 'data-anim-line': '1' }));
-  box.appendChild(svg);
-  if (state.animatePending) animateSvgChart(svg, 'line');
+  renderMorphLineSvg(box, {
+    chartId: 'home-sparkline',
+    w,
+    h,
+    xMin: padX,
+    xMax: padX + innerW,
+    baselineY: h - padY,
+    buildDefs: () => {
+      const defs = svgEl('defs');
+      const grad = svgEl('linearGradient', { id: 'homeSparkGrad', x1: '0', y1: '0', x2: '0', y2: '1' });
+      grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.32' }));
+      grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.01' }));
+      defs.appendChild(grad);
+      return defs;
+    },
+    buildGridNodes: () => [],
+    series: [{ key: 'tok', pts, stroke: 'var(--blue)', strokeWidth: 2, fill: 'url(#homeSparkGrad)' }],
+    animate: state.animatePending,
+  });
 }
 
 // ---------- Tab 2: Context (Grid-Free Layout) ----------
@@ -1106,37 +1621,65 @@ function renderContextTab() {
   renderCompositionBar($('ctxStackedBar'), comp, refTokens);
 
   const list = $('ctxCompRows');
-  list.replaceChildren();
   const totalCatTokens = Math.max(1, comp.categories.reduce((acc, c) => acc + c.tokens, 0));
+  const existingRows = new Map();
+  for (const row of Array.from(list.children)) {
+    const k = row.dataset?.catKey;
+    if (k) existingRows.set(k, row);
+    else row.remove();
+  }
 
+  let cursor = null;
   for (const c of comp.categories) {
     const tone = COMP_COLORS[c.key]?.color || 'var(--blue)';
     const share = c.tokens / totalCatTokens;
-    const bar = el('progress', {
-      className: 'ios-progress',
-      max: '1',
-      value: Math.max(0.01, Math.min(1, share)).toFixed(4),
-      'aria-label': `${c.label} 占比 ${(share * 100).toFixed(1)}%`,
-    });
-    bar.style.setProperty('--tone-color', tone);
-
+    const clamped = Math.max(0.01, Math.min(1, share));
     const delta = Number(c.deltaTokens) || 0;
     const deltaCls = delta > 0 ? 'comp-delta-chip is-up' : delta < 0 ? 'comp-delta-chip is-down' : 'comp-delta-chip';
     const deltaTxt = delta === 0 ? '±0' : `${delta > 0 ? '+' : ''}${fmtCompact(delta)}`;
+    const statTxt = `${fmtExact(c.tokens)} (${(share * 100).toFixed(1)}%)`;
 
-    list.appendChild(
-      el('div', { className: 'comp-detail-row' }, [
+    let row = existingRows.get(c.key);
+    if (!row) {
+      const bar = el('progress', {
+        className: 'ios-progress',
+        max: '1',
+        value: clamped.toFixed(4),
+        'aria-label': `${c.label} 占比 ${(share * 100).toFixed(1)}%`,
+      });
+      bar.style.setProperty('--tone-color', tone);
+      bar._progVal = clamped;
+
+      row = el('div', { className: 'comp-detail-row', 'data-cat-key': c.key }, [
         el('span', { className: 'comp-dot', style: { background: tone } }),
         el('div', { className: 'comp-detail-main' }, [
           el('div', { className: 'comp-detail-top' }, [
             el('span', { textContent: c.label }),
-            el('span', { className: 'mono-num', textContent: `${fmtExact(c.tokens)} (${(share * 100).toFixed(1)}%)` }),
+            el('span', { className: 'mono-num', 'data-cat-stat': '1', textContent: statTxt }),
           ]),
           bar,
         ]),
-        el('span', { className: deltaCls, textContent: deltaTxt, title: '相比上一轮净变化' }),
-      ]),
-    );
+        el('span', { className: deltaCls, 'data-cat-delta': '1', textContent: deltaTxt, title: '相比上一轮净变化' }),
+      ]);
+    } else {
+      const bar = row.querySelector('progress.ios-progress');
+      const statEl = row.querySelector('[data-cat-stat]');
+      const deltaEl = row.querySelector('[data-cat-delta]');
+      if (bar) {
+        bar.style.setProperty('--tone-color', tone);
+        bar.setAttribute('aria-label', `${c.label} 占比 ${(share * 100).toFixed(1)}%`);
+        tweenProgressBar(bar, clamped);
+      }
+      if (statEl) statEl.textContent = statTxt;
+      if (deltaEl) {
+        deltaEl.className = deltaCls;
+        deltaEl.textContent = deltaTxt;
+      }
+    }
+
+    const expectedNext = cursor ? cursor.nextSibling : list.firstChild;
+    if (row !== expectedNext) list.insertBefore(row, expectedNext);
+    cursor = row;
   }
 
   renderTurnChart();
@@ -1169,10 +1712,10 @@ function renderStepBriefForTurn(turn) {
 function renderTurnChart() {
   const s = state.snap?.selectedSession;
   const box = $('turnChartBox');
-  box.replaceChildren();
 
   if (!s || !Array.isArray(s.turns) || !s.turns.length) {
-    box.appendChild(el('div', { className: 'empty-state', textContent: '当前会话尚无 API 调用记录' }));
+    box._morphState = null;
+    box.replaceChildren(el('div', { className: 'empty-state', textContent: '当前会话尚无 API 调用记录' }));
     renderStepBriefForTurn(null);
     return;
   }
@@ -1189,131 +1732,162 @@ function renderTurnChart() {
   const padB = 22;
   const innerW = w - padL - padR;
   const innerH = h - padT - padB;
+  const isDelta = state.turnMode === 'delta';
+  const stepW = innerW / turns.length;
 
-  const svg = svgEl('svg', {
-    class: 'chart-svg',
-    viewBox: `0 0 ${w} ${h}`,
-    role: 'img',
-    'aria-label': state.turnMode === 'delta' ? '单轮上下文增量趋势' : '逐轮上下文堆叠趋势',
-  });
+  let baselineY = padT + innerH;
+  const items = [];
+  const overlayNodes = [];
 
-  if (state.turnMode === 'delta') {
+  if (isDelta) {
     $('turnChartSubtitle').textContent = 'Delta 模式 · 正值为新增上下文，负值绿色代表压缩回收';
     const deltas = turns.map((t) => (typeof t.deltaPromptTokens === 'number' ? t.deltaPromptTokens : t.promptTokens));
     const maxAbs = niceCeil(Math.max(5000, ...deltas.map((v) => Math.abs(v))));
     const hasNeg = deltas.some((v) => v < 0);
-    const baseY = hasNeg ? padT + innerH * 0.68 : padT + innerH;
-    const posScale = baseY - padT;
-    const negScale = padT + innerH - baseY;
-
-    svg.appendChild(svgEl('line', { class: 'chart-grid-line', x1: padL, y1: baseY, x2: w - padR, y2: baseY }));
-    svg.appendChild(
-      svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: padT + 6, 'text-anchor': 'end' }, [
-        document.createTextNode(`+${fmtCompact(maxAbs)}`),
-      ]),
-    );
-
-    const stepW = innerW / turns.length;
+    baselineY = hasNeg ? padT + innerH * 0.68 : padT + innerH;
+    const posScale = baselineY - padT;
+    const negScale = padT + innerH - baselineY;
     const barW = Math.max(2.5, Math.min(14, stepW * 0.72));
 
     turns.forEach((t, idx) => {
       const d = deltas[idx];
       const cx = padL + (idx + 0.5) * stepW;
       const bh = Math.max(2, Math.min(1, Math.abs(d) / maxAbs) * (d >= 0 ? posScale : Math.max(10, negScale)));
-      const y = d >= 0 ? baseY - bh : baseY;
-      const isSelected = activeTurn && activeTurn.seq === t.seq;
+      const y = d >= 0 ? baselineY - bh : baselineY;
+      const isSelected = Boolean(activeTurn && activeTurn.seq === t.seq);
       const fill = d < 0 ? 'var(--ok)' : d >= 15_000 ? 'var(--orange)' : 'var(--bar-teal)';
-
-      const rect = svgEl('rect', {
-        class: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
-        'data-neg': d < 0 ? '1' : '0',
-        x: (cx - barW / 2).toFixed(1),
-        y: y.toFixed(1),
-        width: barW.toFixed(1),
-        height: bh.toFixed(1),
-        rx: '2.5',
+      items.push({
+        key: `turn:${t.seq}`,
+        className: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
+        neg: d < 0,
+        x: cx - barW / 2,
+        y,
+        width: barW,
+        height: bh,
+        originY: baselineY,
+        rx: 2.5,
         fill,
+        opacity: 1,
         stroke: isSelected ? 'var(--text)' : 'none',
-        'stroke-width': isSelected ? '1.2' : '0',
+        strokeWidth: isSelected ? 1.2 : 0,
+        title: `#${t.seq} · ${d >= 0 ? '+' : ''}${fmtCompact(d)}`,
+        onClick: () => {
+          state.pinnedTurnSeq = t.seq;
+          renderTurnChart();
+        },
       });
-      rect.appendChild(svgEl('title', {}, [document.createTextNode(`#${t.seq} · ${d >= 0 ? '+' : ''}${fmtCompact(d)}`)]));
-      rect.addEventListener('click', () => {
+    });
+
+    renderMorphBarsSvg(box, {
+      chartId: 'ctx-turns',
+      w,
+      h,
+      baselineY,
+      ariaLabel: '单轮上下文增量趋势',
+      buildGridNodes: () => {
+        const nodes = [
+          svgEl('line', { class: 'chart-grid-line', x1: padL, y1: baselineY, x2: w - padR, y2: baselineY }),
+          svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: padT + 6, 'text-anchor': 'end' }, [
+            document.createTextNode(`+${fmtCompact(maxAbs)}`),
+          ]),
+          svgEl('text', { class: 'chart-axis-text', x: padL, y: h - 4 }, [document.createTextNode(`#${turns[0].seq}`)]),
+        ];
+        if (turns.length > 1) {
+          nodes.push(
+            svgEl('text', { class: 'chart-axis-text', x: w - padR, y: h - 4, 'text-anchor': 'end' }, [
+              document.createTextNode(`#${turns[turns.length - 1].seq} 轮`),
+            ]),
+          );
+        }
+        return nodes;
+      },
+      buildOverlayNodes: () => overlayNodes,
+      items,
+      animate: state.animatePending,
+    });
+    return;
+  }
+
+  $('turnChartSubtitle').textContent = 'Total 模式 · 点击任意柱查看该轮 User / In / Response 摘要';
+  const maxY = niceCeil(Math.max(10_000, ...turns.map((t) => t.promptTokens)));
+  const barW = Math.max(2.5, Math.min(12, stepW * 0.72));
+
+  turns.forEach((t, idx) => {
+    const cx = padL + (idx + 0.5) * stepW;
+    const bh = Math.max(2, (t.promptTokens / maxY) * innerH);
+    const y = padT + innerH - bh;
+    const isSelected = Boolean(activeTurn && activeTurn.seq === t.seq);
+
+    items.push({
+      key: `turn:${t.seq}`,
+      className: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
+      neg: false,
+      x: cx - barW / 2,
+      y,
+      width: barW,
+      height: bh,
+      originY: baselineY,
+      rx: 2.5,
+      fill: isSelected ? 'var(--accent)' : 'var(--blue)',
+      opacity: isSelected ? 1 : 0.84,
+      stroke: 'none',
+      strokeWidth: 0,
+      title: `#${t.seq} · ${fmtCompact(t.promptTokens)}`,
+      onClick: () => {
         state.pinnedTurnSeq = t.seq;
         renderTurnChart();
-      });
-      svg.appendChild(rect);
+      },
     });
-  } else {
-    $('turnChartSubtitle').textContent = 'Total 模式 · 点击任意柱查看该轮 User / In / Response 摘要';
-    const maxY = niceCeil(Math.max(10_000, ...turns.map((t) => t.promptTokens)));
 
-    [0, 0.5, 1].forEach((f) => {
-      const y = padT + innerH * (1 - f);
-      svg.appendChild(svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }));
-      svg.appendChild(
-        svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
-          document.createTextNode(f === 0 ? '0' : fmtCompact(maxY * f)),
+    if (t.compactedBefore) {
+      overlayNodes.push(
+        svgEl('line', {
+          x1: cx.toFixed(1),
+          y1: padT,
+          x2: cx.toFixed(1),
+          y2: padT + innerH,
+          stroke: 'var(--ok)',
+          'stroke-width': '1',
+          'stroke-dasharray': '3 3',
+        }),
+        svgEl('text', { class: 'chart-axis-text', x: cx.toFixed(1), y: padT + 8, 'text-anchor': 'middle' }, [
+          document.createTextNode('✂'),
         ]),
       );
-    });
+    }
+  });
 
-    const stepW = innerW / turns.length;
-    const barW = Math.max(2.5, Math.min(12, stepW * 0.72));
-
-    turns.forEach((t, idx) => {
-      const cx = padL + (idx + 0.5) * stepW;
-      const bh = Math.max(2, (t.promptTokens / maxY) * innerH);
-      const y = padT + innerH - bh;
-      const isSelected = activeTurn && activeTurn.seq === t.seq;
-
-      const rect = svgEl('rect', {
-        class: `trend-bar-btn${isSelected ? ' is-selected' : ''}`,
-        x: (cx - barW / 2).toFixed(1),
-        y: y.toFixed(1),
-        width: barW.toFixed(1),
-        height: bh.toFixed(1),
-        rx: '2.5',
-        fill: isSelected ? 'var(--accent)' : 'var(--blue)',
-        opacity: isSelected ? '1' : '0.84',
-      });
-      rect.appendChild(svgEl('title', {}, [document.createTextNode(`#${t.seq} · ${fmtCompact(t.promptTokens)}`)]));
-      rect.addEventListener('click', () => {
-        state.pinnedTurnSeq = t.seq;
-        renderTurnChart();
-      });
-      svg.appendChild(rect);
-
-      if (t.compactedBefore) {
-        svg.appendChild(
-          svgEl('line', {
-            x1: cx.toFixed(1),
-            y1: padT,
-            x2: cx.toFixed(1),
-            y2: padT + innerH,
-            stroke: 'var(--ok)',
-            'stroke-width': '1',
-            'stroke-dasharray': '3 3',
-          }),
+  renderMorphBarsSvg(box, {
+    chartId: 'ctx-turns',
+    w,
+    h,
+    baselineY,
+    ariaLabel: '逐轮上下文堆叠趋势',
+    buildGridNodes: () => {
+      const nodes = [];
+      [0, 0.5, 1].forEach((f) => {
+        const y = padT + innerH * (1 - f);
+        nodes.push(
+          svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }),
+          svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
+            document.createTextNode(f === 0 ? '0' : fmtCompact(maxY * f)),
+          ]),
         );
-        svg.appendChild(
-          svgEl('text', { class: 'chart-axis-text', x: cx.toFixed(1), y: padT + 8, 'text-anchor': 'middle' }, [
-            document.createTextNode('✂'),
+      });
+      nodes.push(svgEl('text', { class: 'chart-axis-text', x: padL, y: h - 4 }, [document.createTextNode(`#${turns[0].seq}`)]));
+      if (turns.length > 1) {
+        nodes.push(
+          svgEl('text', { class: 'chart-axis-text', x: w - padR, y: h - 4, 'text-anchor': 'end' }, [
+            document.createTextNode(`#${turns[turns.length - 1].seq} 轮`),
           ]),
         );
       }
-    });
-  }
-
-  svg.appendChild(svgEl('text', { class: 'chart-axis-text', x: padL, y: h - 4 }, [document.createTextNode(`#${turns[0].seq}`)]));
-  if (turns.length > 1) {
-    svg.appendChild(
-      svgEl('text', { class: 'chart-axis-text', x: w - padR, y: h - 4, 'text-anchor': 'end' }, [
-        document.createTextNode(`#${turns[turns.length - 1].seq} 轮`),
-      ]),
-    );
-  }
-  box.appendChild(svg);
-  if (state.animatePending) animateSvgChart(svg, 'bars');
+      return nodes;
+    },
+    buildOverlayNodes: () => overlayNodes,
+    items,
+    animate: state.animatePending,
+  });
 }
 
 function renderContextEvents() {
@@ -1385,17 +1959,15 @@ function renderUsageTab() {
   renderDailyTable(usage.days || []);
 }
 
-function renderChartDateTicks(svg, days, padL, innerW, yPos) {
-  if (!days.length) return;
+function buildChartDateTickNodes(days, padL, innerW, yPos) {
+  if (!days.length) return [];
   const picks = days.length === 1 ? [0] : days.length < 5 ? [0, days.length - 1] : [0, Math.floor(days.length / 2), days.length - 1];
-  picks.forEach((idx, posIdx) => {
+  return picks.map((idx, posIdx) => {
     const x = padL + (days.length === 1 ? innerW / 2 : (idx / (days.length - 1)) * innerW);
     const anchor = posIdx === 0 ? 'start' : posIdx === picks.length - 1 ? 'end' : 'middle';
-    svg.appendChild(
-      svgEl('text', { class: 'chart-axis-text', x: x.toFixed(1), y: yPos, 'text-anchor': anchor }, [
-        document.createTextNode(days[idx].label || days[idx].date.slice(5)),
-      ]),
-    );
+    return svgEl('text', { class: 'chart-axis-text', x: x.toFixed(1), y: yPos, 'text-anchor': anchor }, [
+      document.createTextNode(days[idx].label || days[idx].date.slice(5)),
+    ]);
   });
 }
 
@@ -1405,9 +1977,9 @@ function renderCallsChart() {
   $('callsChartSum').textContent = `区间累计 ${fmtExact(totals.apiCalls || 0)} 次`;
 
   const box = $('callsChartBox');
-  box.replaceChildren();
   if (!days.length) {
-    box.appendChild(el('div', { className: 'empty-state', textContent: '当前区间暂无请求记录' }));
+    box._morphState = null;
+    box.replaceChildren(el('div', { className: 'empty-state', textContent: '当前区间暂无请求记录' }));
     return;
   }
 
@@ -1421,36 +1993,44 @@ function renderCallsChart() {
   const innerH = h - padT - padB;
   const maxY = niceCeil(Math.max(4, ...days.map((d) => d.apiCalls)));
 
-  const svg = svgEl('svg', { class: 'chart-svg', viewBox: `0 0 ${w} ${h}` });
-  const defs = svgEl('defs');
-  const grad = svgEl('linearGradient', { id: 'callsAreaGrad', x1: '0', y1: '0', x2: '0', y2: '1' });
-  grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.35' }));
-  grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.02' }));
-  defs.appendChild(grad);
-  svg.appendChild(defs);
-
-  [0, 0.5, 1].forEach((f) => {
-    const y = padT + innerH * (1 - f);
-    svg.appendChild(svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }));
-    svg.appendChild(
-      svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
-        document.createTextNode(f === 0 ? '0' : fmtCompact(Math.round(maxY * f))),
-      ]),
-    );
-  });
-
   const pts = days.map((d, i) => ({
     x: padL + (days.length === 1 ? innerW / 2 : (i / (days.length - 1)) * innerW),
     y: padT + innerH * (1 - d.apiCalls / maxY),
   }));
-  const lineD = buildSmoothPath(pts);
-  const areaD = `${lineD} L ${pts[pts.length - 1].x.toFixed(1)} ${(padT + innerH).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(padT + innerH).toFixed(1)} Z`;
 
-  svg.appendChild(svgEl('path', { d: areaD, fill: 'url(#callsAreaGrad)', 'data-anim-area': '1' }));
-  svg.appendChild(svgEl('path', { d: lineD, fill: 'none', stroke: 'var(--blue)', 'stroke-width': '2', 'stroke-linecap': 'round', 'data-anim-line': '1' }));
-  renderChartDateTicks(svg, days, padL, innerW, h - 4);
-  box.appendChild(svg);
-  if (state.animatePending) animateSvgChart(svg, 'line');
+  renderMorphLineSvg(box, {
+    chartId: 'usage-calls',
+    w,
+    h,
+    xMin: padL,
+    xMax: padL + innerW,
+    baselineY: padT + innerH,
+    ariaLabel: '每日 API 请求趋势',
+    buildDefs: () => {
+      const defs = svgEl('defs');
+      const grad = svgEl('linearGradient', { id: 'callsAreaGrad', x1: '0', y1: '0', x2: '0', y2: '1' });
+      grad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.35' }));
+      grad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': 'var(--blue)', 'stop-opacity': '0.02' }));
+      defs.appendChild(grad);
+      return defs;
+    },
+    buildGridNodes: () => {
+      const nodes = [];
+      [0, 0.5, 1].forEach((f) => {
+        const y = padT + innerH * (1 - f);
+        nodes.push(
+          svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }),
+          svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
+            document.createTextNode(f === 0 ? '0' : fmtCompact(Math.round(maxY * f))),
+          ]),
+        );
+      });
+      nodes.push(...buildChartDateTickNodes(days, padL, innerW, h - 4));
+      return nodes;
+    },
+    series: [{ key: 'calls', pts, stroke: 'var(--blue)', strokeWidth: 2, fill: 'url(#callsAreaGrad)' }],
+    animate: state.animatePending,
+  });
 }
 
 function renderTokensChart() {
@@ -1460,11 +2040,11 @@ function renderTokensChart() {
 
   const box = $('tokensChartBox');
   const legend = $('tokensChartLegend');
-  box.replaceChildren();
   legend.replaceChildren();
 
   if (!days.length) {
-    box.appendChild(el('div', { className: 'empty-state', textContent: '当前区间暂无 Token 记录' }));
+    box._morphState = null;
+    box.replaceChildren(el('div', { className: 'empty-state', textContent: '当前区间暂无 Token 记录' }));
     return;
   }
 
@@ -1503,7 +2083,7 @@ function renderTokensChart() {
 
   const w = 440;
   const h = 152;
-  const padL = 42;
+  const padL = 46;
   const padR = 12;
   const padT = 14;
   const padB = 22;
@@ -1511,16 +2091,20 @@ function renderTokensChart() {
   const innerH = h - padT - padB;
   const maxY = niceCeil(Math.max(10_000, ...days.map((d) => d.totalTokens || 0)));
 
-  const svg = svgEl('svg', { class: 'chart-svg', viewBox: `0 0 ${w} ${h}` });
-  [0, 0.5, 1].forEach((f) => {
-    const y = padT + innerH * (1 - f);
-    svg.appendChild(svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }));
-    svg.appendChild(
-      svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
-        document.createTextNode(f === 0 ? '0' : fmtCompact(maxY * f)),
-      ]),
-    );
-  });
+  const buildGridNodes = () => {
+    const nodes = [];
+    [0, 0.5, 1].forEach((f) => {
+      const y = padT + innerH * (1 - f);
+      nodes.push(
+        svgEl('line', { class: 'chart-grid-line', x1: padL, y1: y, x2: w - padR, y2: y }),
+        svgEl('text', { class: 'chart-axis-text', x: padL - 5, y: y + 3, 'text-anchor': 'end' }, [
+          document.createTextNode(f === 0 ? '0' : fmtCompact(maxY * f)),
+        ]),
+      );
+    });
+    nodes.push(...buildChartDateTickNodes(days, padL, innerW, h - 4));
+    return nodes;
+  };
 
   if (state.tokStyle === 'line') {
     const ptsA = days.map((d, i) => {
@@ -1537,52 +2121,81 @@ function renderTokensChart() {
         y: padT + innerH * (1 - b / maxY),
       };
     });
-    svg.appendChild(svgEl('path', { d: buildSmoothPath(ptsA), fill: 'none', stroke: 'var(--bar-teal)', 'stroke-width': '2', 'stroke-linecap': 'round', 'data-anim-line': '1' }));
-    svg.appendChild(svgEl('path', { d: buildSmoothPath(ptsB), fill: 'none', stroke: 'var(--bar-coral)', 'stroke-width': '2', 'stroke-linecap': 'round', 'data-anim-line': '1' }));
-  } else {
-    const slotW = innerW / days.length;
-    const barW = Math.max(2.5, Math.min(14, slotW * 0.68));
-    days.forEach((d, i) => {
-      const [a, b] = getAB(d);
-      const total = a + b;
-      if (total <= 0) return;
-
-      const x = padL + (i + 0.5) * slotW - barW / 2;
-      const hTotal = Math.max(2, (total / maxY) * innerH);
-      const yTop = padT + innerH - hTotal;
-      const hB = (b / total) * hTotal;
-      const hA = Math.max(0, hTotal - hB);
-
-      if (hA > 0) {
-        const rectA = svgEl('rect', {
-          x: x.toFixed(1),
-          y: (yTop + hB).toFixed(1),
-          width: barW.toFixed(1),
-          height: hA.toFixed(1),
-          rx: hB <= 0.5 ? '3' : '1.5',
-          fill: 'var(--bar-teal)',
-        });
-        rectA.appendChild(svgEl('title', {}, [document.createTextNode(`${d.date}\n${labelA}: ${fmtCompact(a)}\n${labelB}: ${fmtCompact(b)}`)]));
-        svg.appendChild(rectA);
-      }
-      if (hB > 0) {
-        const rectB = svgEl('rect', {
-          x: x.toFixed(1),
-          y: yTop.toFixed(1),
-          width: barW.toFixed(1),
-          height: hB.toFixed(1),
-          rx: '3',
-          fill: 'var(--bar-coral)',
-        });
-        rectB.appendChild(svgEl('title', {}, [document.createTextNode(`${d.date}\n${labelA}: ${fmtCompact(a)}\n${labelB}: ${fmtCompact(b)}`)]));
-        svg.appendChild(rectB);
-      }
+    renderMorphLineSvg(box, {
+      chartId: 'usage-tokens',
+      w,
+      h,
+      xMin: padL,
+      xMax: padL + innerW,
+      baselineY: padT + innerH,
+      ariaLabel: '每日 Token 折线趋势',
+      buildGridNodes,
+      series: [
+        { key: 'a', pts: ptsA, stroke: 'var(--bar-teal)', strokeWidth: 2, fill: null },
+        { key: 'b', pts: ptsB, stroke: 'var(--bar-coral)', strokeWidth: 2, fill: null },
+      ],
+      animate: state.animatePending,
     });
+    return;
   }
 
-  renderChartDateTicks(svg, days, padL, innerW, h - 4);
-  box.appendChild(svg);
-  if (state.animatePending) animateSvgChart(svg, state.tokStyle === 'line' ? 'line' : 'bars');
+  const slotW = innerW / days.length;
+  const barW = Math.max(2.5, Math.min(14, slotW * 0.68));
+  const baselineY = padT + innerH;
+  const items = [];
+
+  days.forEach((d, i) => {
+    const [a, b] = getAB(d);
+    const total = a + b;
+    if (total <= 0) return;
+
+    const x = padL + (i + 0.5) * slotW - barW / 2;
+    const hTotal = Math.max(2, (total / maxY) * innerH);
+    const yTop = baselineY - hTotal;
+    const hB = (b / total) * hTotal;
+    const hA = Math.max(0, hTotal - hB);
+    const tip = `${d.date}\n${labelA}: ${fmtCompact(a)}\n${labelB}: ${fmtCompact(b)}`;
+
+    if (hA > 0) {
+      items.push({
+        key: `a:${d.date}`,
+        x,
+        y: yTop + hB,
+        width: barW,
+        height: hA,
+        originY: baselineY,
+        rx: hB <= 0.5 ? 3 : 1.5,
+        fill: 'var(--bar-teal)',
+        opacity: 1,
+        title: tip,
+      });
+    }
+    if (hB > 0) {
+      items.push({
+        key: `b:${d.date}`,
+        x,
+        y: yTop,
+        width: barW,
+        height: hB,
+        originY: baselineY,
+        rx: 3,
+        fill: 'var(--bar-coral)',
+        opacity: 1,
+        title: tip,
+      });
+    }
+  });
+
+  renderMorphBarsSvg(box, {
+    chartId: 'usage-tokens',
+    w,
+    h,
+    baselineY,
+    ariaLabel: '每日 Token 柱状构成',
+    buildGridNodes,
+    items,
+    animate: state.animatePending,
+  });
 }
 
 function renderDailyTable(days) {
@@ -1763,23 +2376,35 @@ function render() {
 
 // ---------- Poll Loop ----------
 async function refreshNow(force = false) {
-  if (state.fetching) return;
+  if (state.fetching) {
+    if (force) state.queuedForce = true;
+    return;
+  }
   state.fetching = true;
   const refreshBtn = $('refreshBtn');
   if (force && refreshBtn) refreshBtn.classList.add('is-spinning');
 
   try {
     const data = await fetchSnapshot(force);
+    if (data.uiVersion) {
+      if (!state.bootUiVersion) state.bootUiVersion = data.uiVersion;
+      else if (force && data.uiVersion !== state.bootUiVersion) {
+        location.reload();
+        return;
+      }
+    }
     state.etag = data.etag || state.etag;
-    if (!data.unchanged) {
-      state.snap = data;
-      render();
-    } else if (state.animatePending || state.fadeOnRender) {
-      if (state.snap) {
+    if (!state.queuedForce) {
+      if (!data.unchanged) {
+        state.snap = data;
         render();
-      } else {
-        state.animatePending = false;
-        state.fadeOnRender = false;
+      } else if (state.animatePending || state.fadeOnRender) {
+        if (state.snap) {
+          render();
+        } else {
+          state.animatePending = false;
+          state.fadeOnRender = false;
+        }
       }
     }
   } catch (err) {
@@ -1793,6 +2418,10 @@ async function refreshNow(force = false) {
   } finally {
     state.fetching = false;
     if (refreshBtn) refreshBtn.classList.remove('is-spinning');
+    if (state.queuedForce) {
+      state.queuedForce = false;
+      refreshNow(true);
+    }
   }
 }
 
