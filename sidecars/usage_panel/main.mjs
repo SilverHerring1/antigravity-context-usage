@@ -17,7 +17,6 @@ const PUBLIC_DIR = join(__dirname, 'public');
 const STATIC_ASSETS = {
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
-  '/avatar.jpg': ['avatar.jpg', 'image/jpeg'],
   '/fonts/InterVariable.woff2': ['fonts/InterVariable.woff2', 'font/woff2'],
   '/fonts/MapleMono-Regular.woff2': ['fonts/MapleMono-Regular.woff2', 'font/woff2'],
 };

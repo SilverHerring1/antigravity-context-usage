@@ -20,7 +20,7 @@
 <body>
   <div id="app" class="app-stage">
     <main class="shell" tabindex="-1">
-      <!-- Minimalist Transparent Top Header: Borderless SilverHerring1 Avatar + DAY/MONTH/TOTAL -->
+      <!-- Minimalist Top Header: Session Switcher & DAY/MONTH/TOTAL -->
       <header class="titlebar">
         <div class="titlebar-main">
           <button
@@ -31,23 +31,10 @@
             command="toggle-popover"
             title="切换查看的对话会话"
           >
-            <span class="avatar-wrap">
-              <img
-                id="userAvatarImg"
-                src="./avatar.jpg"
-                alt="SilverHerring1"
-                width="26"
-                height="26"
-                class="avatar-img"
-              >
-              <span id="liveDot" class="live-dot" aria-hidden="true"></span>
-            </span>
+            <span id="liveDot" class="live-dot" aria-hidden="true"></span>
             <span class="profile-meta">
-              <span class="profile-top">
-                <strong class="profile-name">SilverHerring1</strong>
-                <span id="liveCountChip" class="live-count-text" aria-hidden="true"></span>
-              </span>
-              <span id="sessionPickerLabel" class="profile-sub">当前活跃会话</span>
+              <span id="sessionPickerLabel" class="profile-name">当前活跃会话</span>
+              <span id="liveCountChip" class="live-count-text" aria-hidden="true"></span>
             </span>
             <span class="chip-chevron" aria-hidden="true">▾</span>
           </button>
@@ -152,7 +139,7 @@
             <div id="homeToolsList" class="progress-list"></div>
           </div>
 
-          <!-- Activity Heatmap + Sparkline (Javis603 compact grid + 5 active levels) -->
+          <!-- Activity Heatmap + Sparkline -->
           <div class="shell-section">
             <div class="section-head">
               <span class="section-title">活动 · 近 24 周</span>
@@ -180,7 +167,7 @@
           </div>
         </section>
 
-        <!-- VIEW 2: CONTEXT (dsh-context design, ZERO 100-cell grid) -->
+        <!-- VIEW 2: CONTEXT (grid-free layout) -->
         <section id="panel-context" class="view-panel" aria-label="上下文组成与趋势" hidden>
           <!-- Context Stats 6-Cell Hairline Strip -->
           <div class="shell-section">
@@ -212,7 +199,7 @@
             </div>
           </div>
 
-          <!-- dsh-context Current Composition Stacked Bar + Rows -->
+          <!-- Current Composition Stacked Bar + Rows -->
           <div class="shell-section">
             <div class="section-head">
               <div>
@@ -236,7 +223,7 @@
             <div id="ctxCompRows" class="comp-detail-list"></div>
           </div>
 
-          <!-- dsh-context Context Trend + 3-Line Step Brief -->
+          <!-- Context Trend + 3-Line Step Brief -->
           <div class="shell-section">
             <div class="section-head">
               <div>
@@ -274,7 +261,7 @@
             </div>
           </div>
 
-          <!-- dsh-context Events Log -->
+          <!-- Events Log -->
           <div class="shell-section">
             <div class="section-head">
               <div>
@@ -353,10 +340,6 @@
               <div>
                 <h2 class="section-title">Token 活动 · 近 24 周</h2>
                 <p id="heatmapSubtitle" class="section-sub">活跃 — 天 · 点击格子查看当天统计</p>
-              </div>
-              <div class="capsule-group" role="group" aria-label="热力图指标">
-                <button type="button" class="capsule-btn is-active" data-heat-metric="tokens">Tokens</button>
-                <button type="button" class="capsule-btn" data-heat-metric="calls">请求数</button>
               </div>
             </div>
 
@@ -501,7 +484,7 @@
         <div class="dock-spacer" aria-hidden="true"></div>
       </div>
 
-      <!-- Transparent Floating Bottom Controls (Javis603 Split Switcher + Theme Toggle + Refresh) -->
+      <!-- Transparent Floating Bottom Controls (Split Switcher + Theme Toggle + Refresh) -->
       <footer class="bottom-bar" role="region" aria-label="快捷导航">
         <div class="view-switcher">
           <button id="dockHomeBtn" type="button" class="view-switcher-current" title="返回主页或切换页面">
